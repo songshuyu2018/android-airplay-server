@@ -69,7 +69,7 @@ index 45a3e4c..985f30f 100644
          char *str = utils_data_to_string(data,12,12);
          logger_log(raop_buffer->logger, LOGGER_INFO, "encrypted 12 byte header %s", str);
 diff --git a/lib/raop_handlers.h b/lib/raop_handlers.h
-index 5037e68..c01abac 100644
+index 5037e68..eb06ae0 100644
 --- a/lib/raop_handlers.h
 +++ b/lib/raop_handlers.h
 @@ -590,7 +590,56 @@ raop_handler_options(raop_conn_t *conn,
@@ -145,9 +145,9 @@ index 5037e68..c01abac 100644
 +        unsigned short cport = 0;
 +        unsigned short dport = 0;
 +        unsigned short timing_lport = 0;
-+        timing_protocol_t time_protocol = NTP;   /* RAOP always uses NTP timing */
++        unsigned short time_protocol = 0;
 +        unsigned char ct = 2;          /* 2 = ALAC */
-+        unsigned int sr = 44100;
++        unsigned short sr = 44100;
 +        char remote[40] = { 0 };
 +        char transport_reply[256] = { 0 };
 +        const char *cp = strstr(transport_header, "control_port=");
@@ -196,3 +196,42 @@ index 5037e68..c01abac 100644
      // Parsing bplist
      plist_t req_root_node = NULL;
      plist_from_bin(data, data_len, &req_root_node);
+diff --git a/lib/raop_ntp.c b/lib/raop_ntp.c
+index 7da009d..1c09831 100644
+--- a/lib/raop_ntp.c
++++ b/lib/raop_ntp.c
+@@ -315,8 +315,32 @@ raop_ntp_thread(void *arg)
+             logger_log(raop_ntp->logger, LOGGER_ERR, "raop_ntp error sending request. Error %d:%s",
+                      sock_err, SOCKET_ERROR_STRING(sock_err));
+         } else {
+-            // Read response
+-            response_len = recvfrom(raop_ntp->tsock, (char *)response, sizeof(response), 0, NULL, NULL);
++            // Read response (or an incoming timing request when we act as the NTP server)
++            struct sockaddr_storage src_addr;
++            socklen_t src_len = sizeof(src_addr);
++            response_len = recvfrom(raop_ntp->tsock, (char *)response, sizeof(response), 0,
++                                    (struct sockaddr *) &src_addr, &src_len);
++            if (response_len > 0 && ((response[1] & ~0x80) == 0x52)) {
++                /* RAOP (AirPlay 1): the sender polls *us* for time, so answer its
++                 * request with a 0xd3 reply carrying our clock, echoing its
++                 * transmit timestamp in ref_time (this is what senders expect
++                 * from an AirPlay 1 receiver). */
++                unsigned char reply[32] = { 0x80, 0xd3, 0x00, 0x07 };
++                uint64_t reply_time = raop_ntp_get_local_time();
++                memcpy(&reply[8], &response[24], 8);
++                byteutils_put_ntp_timestamp(reply, 16, reply_time);
++                byteutils_put_ntp_timestamp(reply, 24, reply_time);
++                sendto(raop_ntp->tsock, (char *) reply, sizeof(reply), 0,
++                       (struct sockaddr *) &src_addr, src_len);
++                if (logger_debug) {
++                    char *str = utils_data_to_string(reply, sizeof(reply), 16);
++                    logger_log(raop_ntp->logger, LOGGER_DEBUG,
++                               "raop_ntp answered sender timing request (now = %8.6f)\n%s",
++                               (double) reply_time / SECOND_IN_NSECS, str);
++                    free(str);
++                }
++                continue;   /* that was a request, not the reply we were waiting for */
++            }
+             if (response_len < 0) {
+                 char time[30];
+                 ntp_timestamp_to_time(send_time, time, sizeof(time));
