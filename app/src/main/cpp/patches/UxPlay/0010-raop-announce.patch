@@ -69,7 +69,7 @@ index 45a3e4c..985f30f 100644
          char *str = utils_data_to_string(data,12,12);
          logger_log(raop_buffer->logger, LOGGER_INFO, "encrypted 12 byte header %s", str);
 diff --git a/lib/raop_handlers.h b/lib/raop_handlers.h
-index 5037e68..eb06ae0 100644
+index 5037e68..c01abac 100644
 --- a/lib/raop_handlers.h
 +++ b/lib/raop_handlers.h
 @@ -590,7 +590,56 @@ raop_handler_options(raop_conn_t *conn,
@@ -145,9 +145,9 @@ index 5037e68..eb06ae0 100644
 +        unsigned short cport = 0;
 +        unsigned short dport = 0;
 +        unsigned short timing_lport = 0;
-+        unsigned short time_protocol = 0;
++        timing_protocol_t time_protocol = NTP;   /* RAOP always uses NTP timing */
 +        unsigned char ct = 2;          /* 2 = ALAC */
-+        unsigned short sr = 44100;
++        unsigned int sr = 44100;
 +        char remote[40] = { 0 };
 +        char transport_reply[256] = { 0 };
 +        const char *cp = strstr(transport_header, "control_port=");
