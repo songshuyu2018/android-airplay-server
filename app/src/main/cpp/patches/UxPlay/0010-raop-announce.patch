@@ -69,7 +69,7 @@ index 45a3e4c..985f30f 100644
          char *str = utils_data_to_string(data,12,12);
          logger_log(raop_buffer->logger, LOGGER_INFO, "encrypted 12 byte header %s", str);
 diff --git a/lib/raop_handlers.h b/lib/raop_handlers.h
-index 5037e68..2c6ee4c 100644
+index 5037e68..89c1a39 100644
 --- a/lib/raop_handlers.h
 +++ b/lib/raop_handlers.h
 @@ -590,7 +590,56 @@ raop_handler_options(raop_conn_t *conn,
@@ -130,7 +130,7 @@ index 5037e68..2c6ee4c 100644
  }
  
  static void
-@@ -618,6 +667,68 @@ raop_handler_setup(raop_conn_t *conn,
+@@ -618,6 +667,83 @@ raop_handler_setup(raop_conn_t *conn,
          }
      }
  
@@ -186,6 +186,21 @@ index 5037e68..2c6ee4c 100644
 +            return;
 +        }
 +        raop_rtp_start_audio(conn->raop_rtp, &remote_cport, &cport, &dport, &ct, &sr);
++
++        /* Tell the host app the negotiated audio format. The AirPlay 2 plist flow
++         * does this from its stream setup; RAOP senders never send a plist, and
++         * without this call the Android client never opens its audio output
++         * (it keys the playout start off onAudioFormat), so it decodes frames
++         * and stays silent. */
++        if (raop->callbacks.audio_get_format) {
++            unsigned char cb_ct = ct;
++            unsigned short cb_spf = 352;        /* ALAC: 352 frames per packet */
++            bool cb_using_screen = false;
++            bool cb_is_media = true;
++            uint64_t cb_audio_format = 0;
++            raop->callbacks.audio_get_format(raop->callbacks.cls, &cb_ct, &cb_spf,
++                                             &cb_using_screen, &cb_is_media, &cb_audio_format);
++        }
 +
 +        snprintf(transport_reply, sizeof(transport_reply),
 +                 "RTP/AVP/UDP;unicast;mode=record;server_port=%u;control_port=%u;timing_port=%u",
