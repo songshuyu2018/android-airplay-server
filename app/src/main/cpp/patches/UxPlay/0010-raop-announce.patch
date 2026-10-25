@@ -197,10 +197,71 @@ index 5037e68..eb06ae0 100644
      plist_t req_root_node = NULL;
      plist_from_bin(data, data_len, &req_root_node);
 diff --git a/lib/raop_ntp.c b/lib/raop_ntp.c
-index 7da009d..1c09831 100644
+index 7da009d..75d5944 100644
 --- a/lib/raop_ntp.c
 +++ b/lib/raop_ntp.c
-@@ -315,8 +315,32 @@ raop_ntp_thread(void *arg)
+@@ -248,24 +248,37 @@ raop_ntp_init_socket(raop_ntp_t *raop_ntp, int use_ipv6)
+     return -1;
+ }
+ 
++/*
++ * Drain whatever is queued on the timing socket. RAOP (AirPlay 1) senders poll
++ * the receiver for time on this socket, so every queued packet may be a timing
++ * request (type 0xd2) that must be answered with a 0xd3 reply carrying our
++ * clock and echoing the sender's transmit timestamp in ref_time. Anything that
++ * is not a request is stale and can be dropped.
++ */
+ static void
+-raop_ntp_flush_socket(int fd)
++raop_ntp_answer_requests(raop_ntp_t *raop_ntp)
+ {
+-#ifdef _WIN32
+-    u_long bytes_available = 0;
+-#else
+-    int bytes_available = 0;
+-#endif
+-    while (IOCTLSOCKET(fd, FIONREAD, &bytes_available) == 0 && bytes_available > 0)
+-    {
+-        // We are guaranteed that we won't block, because bytes are available.
+-        // Read 1 byte. Extra bytes in the datagram will be discarded.
+-        char c;
+-        int result = recvfrom(fd, &c, sizeof(c), 0, NULL, NULL);
+-        if (result < 0)
+-        {
++    unsigned char packet[128];
++    struct sockaddr_storage src_addr;
++    socklen_t src_len;
++
++    while (1) {
++        src_len = sizeof(src_addr);
++        int n = recvfrom(raop_ntp->tsock, (char *) packet, sizeof(packet), 0,
++                         (struct sockaddr *) &src_addr, &src_len);
++        if (n <= 0) {
+             break;
+         }
++        if ((packet[1] & ~0x80) != 0x52) {
++            continue;   /* not a timing request */
++        }
++        unsigned char reply[32] = { 0x80, 0xd3, 0x00, 0x07 };
++        uint64_t reply_time = raop_ntp_get_local_time();
++        memcpy(&reply[8], &packet[24], 8);
++        byteutils_put_ntp_timestamp(reply, 16, reply_time);
++        byteutils_put_ntp_timestamp(reply, 24, reply_time);
++        sendto(raop_ntp->tsock, (char *) reply, sizeof(reply), 0,
++               (struct sockaddr *) &src_addr, src_len);
+     }
+ }
+ 
+@@ -293,7 +306,7 @@ raop_ntp_thread(void *arg)
+         MUTEX_UNLOCK(raop_ntp->run_mutex);
+ 
+         // Flush the socket in case a super delayed response arrived or something
+-        raop_ntp_flush_socket(raop_ntp->tsock);
++        raop_ntp_answer_requests(raop_ntp);
+ 
+         // Send request
+         uint64_t send_time = raop_ntp_get_local_time();
+@@ -315,8 +328,32 @@ raop_ntp_thread(void *arg)
              logger_log(raop_ntp->logger, LOGGER_ERR, "raop_ntp error sending request. Error %d:%s",
                       sock_err, SOCKET_ERROR_STRING(sock_err));
          } else {
@@ -235,3 +296,18 @@ index 7da009d..1c09831 100644
              if (response_len < 0) {
                  char time[30];
                  ntp_timestamp_to_time(send_time, time, sizeof(time));
+@@ -387,7 +424,13 @@ raop_ntp_thread(void *arg)
+         struct timespec wait_time;
+         MUTEX_LOCK(raop_ntp->wait_mutex);
+         clock_gettime(CLOCK_REALTIME, &wait_time);
+-        wait_time.tv_sec += 3;
++        /* Poll often: as an NTP server we must answer senders promptly, and a
++         * long sleep would hold their requests queued for seconds. */
++        wait_time.tv_nsec += 500 * 1000 * 1000;
++        if (wait_time.tv_nsec >= 1000 * 1000 * 1000) {
++            wait_time.tv_nsec -= 1000 * 1000 * 1000;
++            wait_time.tv_sec += 1;
++        }
+         pthread_cond_timedwait(&raop_ntp->wait_cond, &raop_ntp->wait_mutex, &wait_time);
+         MUTEX_UNLOCK(raop_ntp->wait_mutex);
+     }
