@@ -1,0 +1,189 @@
+diff --git a/lib/raop.c b/lib/raop.c
+index 7098fae..859676c 100644
+--- a/lib/raop.c
++++ b/lib/raop.c
+@@ -119,6 +119,8 @@ struct raop_conn_s {
+     char *client_session_id;
+     bool authenticated;
+     bool have_active_remote;
++    /* RAOP (AirPlay 1): set when the sender sent a valid ANNOUNCE */
++    bool raop_announced;
+ };
+ typedef struct raop_conn_s raop_conn_t;
+ 
+@@ -424,6 +426,8 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
+             }
+         } else if (!strcmp(method, "OPTIONS")) {
+             handler = &raop_handler_options;
++        } else if (!strcmp(method, "ANNOUNCE")) {
++            handler = &raop_handler_announce;
+         } else if (!strcmp(method, "SETUP")) {
+             raop->hls_pending = false;
+             handler = &raop_handler_setup;
+diff --git a/lib/raop_buffer.c b/lib/raop_buffer.c
+index 45a3e4c..7c2e026 100644
+--- a/lib/raop_buffer.c
++++ b/lib/raop_buffer.c
+@@ -77,7 +77,9 @@ raop_buffer_init(logger_t *logger,
+     }
+     raop_buffer->logger = logger;
+     // Need to be initialized internally
+-    raop_buffer->aes_ctx = aes_cbc_init(aeskey, aesiv, AES_DECRYPT);
++    /* RAOP (AirPlay 1) senders may stream unencrypted audio; then there is no
++     * AES key at all and the payload is copied verbatim. */
++    raop_buffer->aes_ctx = (aeskey && aesiv) ? aes_cbc_init(aeskey, aesiv, AES_DECRYPT) : NULL;
+ 
+     for (int i = 0; i < RAOP_BUFFER_LENGTH; i++) {
+         raop_buffer_entry_t *entry = &raop_buffer->entries[i];
+@@ -101,7 +103,9 @@ raop_buffer_destroy(raop_buffer_t *raop_buffer)
+     }
+ 
+     if (raop_buffer) {
+-        aes_cbc_destroy(raop_buffer->aes_ctx);
++        if (raop_buffer->aes_ctx) {
++            aes_cbc_destroy(raop_buffer->aes_ctx);
++        }
+         free(raop_buffer);
+     }
+ 
+@@ -117,6 +121,12 @@ int
+ raop_buffer_decrypt(raop_buffer_t *raop_buffer, unsigned char *data, unsigned char* output, unsigned int payload_size, unsigned int *outputlen)
+ {
+     assert(raop_buffer);
++    if (!raop_buffer->aes_ctx) {
++        /* unencrypted stream: skip the 12 byte RTP header and copy the payload */
++        memcpy(output, &data[12], payload_size);
++        *outputlen = payload_size;
++        return 1;
++    }
+     if (DECRYPTION_TEST) {
+         char *str = utils_data_to_string(data,12,12);
+         logger_log(raop_buffer->logger, LOGGER_INFO, "encrypted 12 byte header %s", str);
+diff --git a/lib/raop_handlers.h b/lib/raop_handlers.h
+index 5037e68..eb06ae0 100644
+--- a/lib/raop_handlers.h
++++ b/lib/raop_handlers.h
+@@ -590,7 +590,56 @@ raop_handler_options(raop_conn_t *conn,
+                      http_request_t *request, http_response_t *response,
+                      char **response_data, int *response_datalen)
+ {
+-    http_response_add_header(response, "Public", "SETUP, RECORD, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER");
++    http_response_add_header(response, "Public", "ANNOUNCE, SETUP, RECORD, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER");
++}
++
++/*
++ * RAOP (AirPlay 1) ANNOUNCE: the sender declares its audio format (SDP) before
++ * SETUP. This build only implemented the AirPlay 2 plist SETUP flow, so RAOP
++ * senders (Music Assistant, shairport-based tools, ...) used to get 501 here.
++ *
++ * Only unencrypted ALAC streams are accepted: the AES key in an ANNOUNCE is
++ * RSA-encrypted with the receiver's RSA public key, and this build publishes an
++ * Ed25519 key (for HAP pairing) instead, so it cannot decrypt it.
++ */
++static void
++raop_handler_announce(raop_conn_t *conn,
++                      http_request_t *request, http_response_t *response,
++                      char **response_data, int *response_datalen)
++{
++    raop_t *raop = conn->raop;
++    const char *data = NULL;
++    int data_len = 0;
++
++    data = http_request_get_data(request, &data_len);
++    if (!data || data_len <= 0) {
++        logger_log(raop->logger, LOGGER_ERR, "ANNOUNCE without an SDP body");
++        http_response_init(response, "RTSP/1.0", 400, "Bad Request");
++        return;
++    }
++
++    bool alac = (strstr(data, "AppleLossless") != NULL);
++    bool encrypted = (strstr(data, "rsaaeskey:") != NULL);
++
++    logger_log(raop->logger, LOGGER_INFO, "ANNOUNCE: codec=%s audio-encryption=%s",
++               alac ? "ALAC" : "unsupported", encrypted ? "rsa(aes)" : "none");
++
++    if (!alac) {
++        logger_log(raop->logger, LOGGER_ERR,
++                   "ANNOUNCE requested an unsupported codec (only AppleLossless/ALAC is supported)");
++        http_response_init(response, "RTSP/1.0", 403, "Forbidden");
++        return;
++    }
++    if (encrypted) {
++        logger_log(raop->logger, LOGGER_ERR,
++                   "ANNOUNCE requested RSA-encrypted audio, which this build cannot decrypt; "
++                   "turn audio encryption off on the sender");
++        http_response_init(response, "RTSP/1.0", 403, "Forbidden");
++        return;
++    }
++
++    conn->raop_announced = true;
++    logger_log(raop->logger, LOGGER_INFO, "ANNOUNCE accepted (unencrypted ALAC)");
+ }
+ 
+ static void
+@@ -618,6 +667,65 @@ raop_handler_setup(raop_conn_t *conn,
+         }
+     }
+ 
++    /*
++     * RAOP (AirPlay 1) SETUP carries a text "Transport:" header and no binary
++     * plist; the AirPlay 2 flow always sends a plist. Handle the RAOP variant
++     * here before falling through to the plist parser.
++     */
++    const char *transport_header = http_request_get_header(request, "Transport");
++    if (transport_header && (!data || data_len < 8 || memcmp(data, "bplist00", 8) != 0)) {
++        unsigned short remote_cport = 0;
++        unsigned short cport = 0;
++        unsigned short dport = 0;
++        unsigned short timing_lport = 0;
++        unsigned short time_protocol = 0;
++        unsigned char ct = 2;          /* 2 = ALAC */
++        unsigned short sr = 44100;
++        char remote[40] = { 0 };
++        char transport_reply[256] = { 0 };
++        const char *cp = strstr(transport_header, "control_port=");
++        const char *tp = strstr(transport_header, "timing_port=");
++
++        if (!conn->raop_announced) {
++            logger_log(raop->logger, LOGGER_WARNING, "RAOP SETUP without a preceding ANNOUNCE");
++        }
++        if (cp) {
++            remote_cport = (unsigned short) atoi(cp + strlen("control_port="));
++        }
++        if (!utils_ipaddress_to_string(conn->remotelen, conn->remote, conn->zone_id,
++                                       remote, (int) sizeof(remote))) {
++            logger_log(raop->logger, LOGGER_ERR, "RAOP SETUP: cannot determine the client address");
++            http_response_init(response, "RTSP/1.0", 500, "Internal Server Error");
++            return;
++        }
++
++        if (!conn->raop_ntp) {
++            conn->raop_ntp = raop_ntp_init(raop->logger, &raop->callbacks, remote, conn->remotelen,
++                                           (unsigned short) (tp ? atoi(tp + strlen("timing_port=")) : 0),
++                                           &time_protocol);
++            raop_ntp_start(conn->raop_ntp, &timing_lport);
++        }
++        if (!conn->raop_rtp) {
++            /* unencrypted RAOP stream: no AES key/IV */
++            conn->raop_rtp = raop_rtp_init(raop->logger, &raop->callbacks, conn->raop_ntp,
++                                           remote, conn->remotelen, NULL, NULL);
++        }
++        if (!conn->raop_rtp) {
++            logger_log(raop->logger, LOGGER_ERR, "RAOP SETUP: could not initialise the RTP stream");
++            http_response_init(response, "RTSP/1.0", 500, "Internal Server Error");
++            return;
++        }
++        raop_rtp_start_audio(conn->raop_rtp, &remote_cport, &cport, &dport, &ct, &sr);
++
++        snprintf(transport_reply, sizeof(transport_reply),
++                 "RTP/AVP/UDP;unicast;mode=record;server_port=%u;control_port=%u;timing_port=%u",
++                 (unsigned) dport, (unsigned) cport, (unsigned) timing_lport);
++        http_response_add_header(response, "Transport", transport_reply);
++        http_response_add_header(response, "Session", "1");
++        logger_log(raop->logger, LOGGER_INFO, "RAOP SETUP accepted (%s)", transport_reply);
++        return;
++    }
++
+     // Parsing bplist
+     plist_t req_root_node = NULL;
+     plist_from_bin(data, data_len, &req_root_node);
