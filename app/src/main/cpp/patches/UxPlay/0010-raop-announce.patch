@@ -69,7 +69,7 @@ index 45a3e4c..985f30f 100644
          char *str = utils_data_to_string(data,12,12);
          logger_log(raop_buffer->logger, LOGGER_INFO, "encrypted 12 byte header %s", str);
 diff --git a/lib/raop_handlers.h b/lib/raop_handlers.h
-index 5037e68..eb06ae0 100644
+index 5037e68..2c6ee4c 100644
 --- a/lib/raop_handlers.h
 +++ b/lib/raop_handlers.h
 @@ -590,7 +590,56 @@ raop_handler_options(raop_conn_t *conn,
@@ -130,7 +130,7 @@ index 5037e68..eb06ae0 100644
  }
  
  static void
-@@ -618,6 +667,65 @@ raop_handler_setup(raop_conn_t *conn,
+@@ -618,6 +667,68 @@ raop_handler_setup(raop_conn_t *conn,
          }
      }
  
@@ -145,9 +145,12 @@ index 5037e68..eb06ae0 100644
 +        unsigned short cport = 0;
 +        unsigned short dport = 0;
 +        unsigned short timing_lport = 0;
-+        unsigned short time_protocol = 0;
++        /* RAOP senders (cliairplay/libraop, shairport-based tools) timestamp with
++         * plain Unix-epoch seconds: NTP would subtract 2208988800 and wreck the
++         * sync calculation. */
++        timing_protocol_t time_protocol = TP_NONE;
 +        unsigned char ct = 2;          /* 2 = ALAC */
-+        unsigned short sr = 44100;
++        unsigned int sr = 44100;
 +        char remote[40] = { 0 };
 +        char transport_reply[256] = { 0 };
 +        const char *cp = strstr(transport_header, "control_port=");
