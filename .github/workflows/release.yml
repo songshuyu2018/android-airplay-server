@@ -1,0 +1,37 @@
+name: Build release APK (unsigned)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "raop-announce"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Use JDK
+        uses: actions/setup-java@v6
+        with:
+          distribution: "zulu"
+          java-version: "21"
+          cache: "gradle"
+
+      - name: Build release APK
+        run: |
+          export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --stacktrace
+
+      - name: Upload unsigned APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-unsigned
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
