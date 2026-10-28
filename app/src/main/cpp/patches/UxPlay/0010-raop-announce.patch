@@ -69,7 +69,7 @@ index 45a3e4c..985f30f 100644
          char *str = utils_data_to_string(data,12,12);
          logger_log(raop_buffer->logger, LOGGER_INFO, "encrypted 12 byte header %s", str);
 diff --git a/lib/raop_handlers.h b/lib/raop_handlers.h
-index 5037e68..89c1a39 100644
+index 5037e68..ac43154 100644
 --- a/lib/raop_handlers.h
 +++ b/lib/raop_handlers.h
 @@ -590,7 +590,56 @@ raop_handler_options(raop_conn_t *conn,
@@ -130,7 +130,7 @@ index 5037e68..89c1a39 100644
  }
  
  static void
-@@ -618,6 +667,83 @@ raop_handler_setup(raop_conn_t *conn,
+@@ -618,6 +667,91 @@ raop_handler_setup(raop_conn_t *conn,
          }
      }
  
@@ -186,6 +186,14 @@ index 5037e68..89c1a39 100644
 +            return;
 +        }
 +        raop_rtp_start_audio(conn->raop_rtp, &remote_cport, &cport, &dport, &ct, &sr);
++
++        /* Hand the sender's DACP identity to the RTP layer. The generic block above
++         * runs before this function creates the RTP stream, so for RAOP senders the
++         * identity was silently dropped and the host app could never send remote
++         * commands (play/pause/next/seek) back to the sender. */
++        if (dacp_id && active_remote_header) {
++            raop_rtp_remote_control_id(conn->raop_rtp, dacp_id, active_remote_header);
++        }
 +
 +        /* Tell the host app the negotiated audio format. The AirPlay 2 plist flow
 +         * does this from its stream setup; RAOP senders never send a plist, and
