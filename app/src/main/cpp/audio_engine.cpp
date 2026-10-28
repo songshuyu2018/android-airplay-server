@@ -171,7 +171,8 @@ private:
     void initInternals(const AudioConfig &cfg) {
         mDecLatency.setEnableLogging(cfg.benchmarkLog);
         mTimeline = std::make_shared<TimelineBuffer>(mSampleRate, mChannels,
-                                                     cfg.staticCushionMs, cfg.percentilePct);
+                                                     cfg.staticCushionMs, cfg.percentilePct,
+                                                     mLog.get());
         mOutput = AudioOutput::create(mSampleRate, mChannels, cfg.oboeBufferFrames,
                                       cfg.lowLatency, mTimeline, mLog);
         mOutput->setClientGain(mClientGain);  // carry current level across rebuild
