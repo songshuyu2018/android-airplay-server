@@ -213,9 +213,9 @@ public:
           mChannels(channels),
           mLog(log),
           mTracker(sampleRate, channels, staticCushionMs, percentilePct),
-          // ring can't be reallocated mid-stream: size for worst-case backlog, i.e. the
-          // largest lead we will hold for absolute alignment + the largest cushion +
-          // one throttle window of overshoot (trims are throttled)
+          // ring can't be reallocated mid-stream: size for worst-case backlog, i.e. cap
+          // of largest reachable cushion + one throttle window of overshoot (trims are
+          // throttled), 2x slack
           mRing((size_t)sampleRate * (MAX_LEAD_MS + 2000 + TRIM_THROTTLE_MS) / 1000 * channels) {}
 
     void noteOutputBufferFrames(int frames) { mTracker.noteOutputBufferFrames(frames); }
@@ -242,12 +242,14 @@ public:
         const bool discontinuity = (gapNs > MAX_GAP_NS || gapNs < -MAX_GAP_NS);
         if (discontinuity) {
             mTracker.reanchor();
-            /* Absolute-alignment point: the sender streams ahead of the instant its
-             * audio must be audible. Hold playout by that lead so this stream's first
-             * frame renders at its presentation time (pts) instead of "as soon as data
-             * arrives", which is what made group play run ~1s ahead. */
-            armHold(ptsNs);
+            mLeadNs.store(0, std::memory_order_relaxed);
+            mLeadLogged.store(false, std::memory_order_relaxed);
         }
+        /* Track how far ahead of its presentation time the stream runs right now: that
+         * lead is the ring depth at which the sample we emit is the one due at pts.
+         * Holding less makes grouped play run ahead; senders burst at the start, so it
+         * has to be tracked continuously rather than sampled once on the first frame. */
+        updateTargetDepth(ptsNs, durNs);
 
         // no-op in static-cushion mode
         mTracker.observe(ptsNs, monoNs(), durNs);
@@ -274,15 +276,18 @@ public:
         const size_t need = (size_t)frames * mChannels;
         const size_t tuned = mTracker.target();
         const int64_t now = monoNs();
+        const size_t avail = mRing.available();
 
-        /* Alignment hold in force: emit silence until the sender's first frame is due.
-         * The ring keeps filling meanwhile, so playout starts on the sender timeline. */
-        const int64_t hold = mHoldSamples.load(std::memory_order_relaxed);
-        if (hold > 0) {
-            const int64_t drop = std::min<int64_t>(hold, (int64_t)need);
-            mHoldSamples.store(hold - drop, std::memory_order_relaxed);
-            memset(out, 0, need * sizeof(int16_t));
-            return;
+        /* Absolute playout alignment: hold output until the ring holds the sender's
+         * current lead, so what we emit is the audio due now on the sender timeline
+         * rather than whatever arrived first. */
+        {
+            const size_t target = (size_t)mTargetDepthSamples.load(std::memory_order_relaxed);
+            const size_t guard = (size_t)mSampleRate * 10 / 1000 * mChannels;  // 10ms
+            if (target > guard && avail + guard < target) {
+                memset(out, 0, need * sizeof(int16_t));
+                return;
+            }
         }
 
         // bound latency: cap tracks tuned cushion live so a calmed link sheds latency
@@ -290,12 +295,8 @@ public:
         // after backlog stayed above cap for TRIM_SUSTAIN (skip transient spikes), at
         // most once per TRIM_THROTTLE, and not within that window of an underrun
         // (trimming while rebuilding cushion is counterproductive)
-        const size_t avail = mRing.available();
-        /* steady-state depth: sender lead + cushion; trimming below it would undo the
-         * absolute alignment and make us run ahead again */
-        const size_t keep = (size_t)mLeadSamples.load(std::memory_order_relaxed) + tuned;
-        const size_t cap = std::max(capOf(tuned), keep + tuned);
-        if (avail > cap) {
+        const size_t keep = std::max((size_t)mTargetDepthSamples.load(std::memory_order_relaxed), tuned);
+        if (avail > keep + capOf(tuned)) {
             if (mAboveCapSinceNs == 0) mAboveCapSinceNs = now;
         } else {
             mAboveCapSinceNs = 0;
@@ -348,8 +349,8 @@ public:
     // must not run concurrently with read()
     void reprime() {
         mPriming = true;
-        mHoldSamples.store(0, std::memory_order_relaxed);
-        mLeadSamples.store(0, std::memory_order_relaxed);
+        mLeadNs.store(0, std::memory_order_relaxed);
+        mTargetDepthSamples.store(0, std::memory_order_relaxed);
     }
 
     // drop buffered audio + rebuild cushion, so resume after pause doesn't play stale
@@ -357,8 +358,8 @@ public:
     void flushAndReprime() {
         mRing.skip(mRing.available());
         mPriming = true;
-        mHoldSamples.store(0, std::memory_order_relaxed);
-        mLeadSamples.store(0, std::memory_order_relaxed);
+        mLeadNs.store(0, std::memory_order_relaxed);
+        mTargetDepthSamples.store(0, std::memory_order_relaxed);
     }
 
     // debug snapshot: backlog + tuned cushion (ms) + counters; reads only atomics, any thread
@@ -409,26 +410,24 @@ private:
         return (int64_t)ts.tv_sec * NS_PER_SEC + (int64_t)ts.tv_nsec;
     }
 
-    // compute how far ahead of its presentation time this stream currently is
-    void armHold(int64_t ptsNs) {
-        const int64_t leadNs = ptsNs - epochNs();
-        if (leadNs <= 0 || leadNs > (int64_t)MAX_LEAD_MS * 1'000'000LL) {
-            mHoldSamples.store(0, std::memory_order_relaxed);
-            mLeadSamples.store(0, std::memory_order_relaxed);
-            return;
-        }
-        const int64_t samples = leadNs * mSampleRate / NS_PER_SEC * mChannels;
-        mLeadSamples.store(samples, std::memory_order_relaxed);
-        mHoldSamples.store(samples, std::memory_order_relaxed);
-        if (mLog) {
-            mLog->info("timeline: aligning playout, hold %lld ms (sender lead)",
-                       (long long)(leadNs / 1'000'000LL));
+    // track the sender's lead: the ring depth that makes playout land on pts
+    void updateTargetDepth(int64_t ptsNs, int64_t durNs) {
+        const int64_t leadNs = ptsNs + durNs - epochNs();
+        if (leadNs <= 0 || leadNs > (int64_t)MAX_LEAD_MS * 1'000'000LL) return;
+        int64_t ema = mLeadNs.load(std::memory_order_relaxed);
+        ema = (ema == 0) ? leadNs : (ema * 7 + leadNs) / 8;
+        mLeadNs.store(ema, std::memory_order_relaxed);
+        mTargetDepthSamples.store(ema * mSampleRate / NS_PER_SEC * mChannels,
+                                  std::memory_order_relaxed);
+        if (!mLeadLogged.exchange(true, std::memory_order_relaxed) && mLog) {
+            mLog->info("timeline: sender lead %lld ms, holding playout to align",
+                       (long long)(ema / 1'000'000LL));
         }
     }
 
     const int mSampleRate;
     const int mChannels;
-    LogSink *mLog = nullptr;             // optional diagnostics sink
+    LogSink *mLog = nullptr;
     DelayTracker mTracker;               // owns cushion policy; read live each read()
     SpscRing mRing;
     TimelineMetrics mMetrics;
@@ -439,8 +438,9 @@ private:
     std::atomic<bool> mUnderran{false};  // consumer->producer: underrun happened
 
     int64_t mExpectedPtsNs = 0;          // presentation time expected at write head
-    std::atomic<int64_t> mHoldSamples{0};  // consumer: silence samples still owed before playout
-    std::atomic<int64_t> mLeadSamples{0};  // steady-state depth implied by the sender lead
+    std::atomic<int64_t> mLeadNs{0};             // smoothed sender lead (producer)
+    std::atomic<int64_t> mTargetDepthSamples{0}; // ring depth at which playout lands on pts
+    std::atomic<bool> mLeadLogged{false};        // lead already logged for this stream
 };
 
 #endif  // TIMELINE_BUFFER_H
