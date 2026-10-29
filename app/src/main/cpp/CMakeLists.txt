@@ -112,6 +112,12 @@ set(AIRPLAY_SOURCES
     ${UXPLAY_LIB}/raop_rtp_mirror.c
     ${UXPLAY_LIB}/srp.c
     ${UXPLAY_LIB}/utils.c
+    # pair_ap: MIT-licensed HAP (AirPlay 2) pairing, vendored with an OpenSSL shim
+    ${UXPLAY_LIB}/pair_ap/pair.c
+    ${UXPLAY_LIB}/pair_ap/pair-tlv.c
+    ${UXPLAY_LIB}/pair_ap/pair_homekit.c
+    ${UXPLAY_LIB}/pair_ap/pair_fruit.c
+    ${UXPLAY_LIB}/pair_ap/sodium_compat.c
 )
 
 # ---------- Android JNI bridge + dnssd shim ----------
@@ -131,6 +137,7 @@ add_dependencies(airplay_native ffmpeg_ep)
 
 target_include_directories(airplay_native PRIVATE
     ${UXPLAY_LIB}
+    ${UXPLAY_LIB}/pair_ap
     ${UXPLAY_LIB}/llhttp
     ${UXPLAY_LIB}/playfair
     ${CMAKE_CURRENT_SOURCE_DIR}
