@@ -1,5 +1,5 @@
 diff --git a/lib/raop.c b/lib/raop.c
-index 7098fae..9ceed67 100644
+index 7098fae..bc0919f 100644
 --- a/lib/raop.c
 +++ b/lib/raop.c
 @@ -22,6 +22,7 @@
@@ -43,7 +43,32 @@ index 7098fae..9ceed67 100644
          free(conn);
          return NULL;
      }
-@@ -424,6 +430,8 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
+@@ -258,7 +264,12 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
+     }
+ 
+  /* this rejects messages from _airplay._tcp for video streaming protocol unless bool raop->hls_support is true*/   
+-    if (!cseq && !raop->hls_support && !ble) {
++    /* AirPlay 2 senders send the first GET /info over plain HTTP/1.1 without a
++     * CSeq header. That is device discovery, not a video streaming request, so it
++     * must not be dropped here (dropping it made them abort the session). */
++    bool is_info_probe = url && strstr(url, "/info") &&
++                         (!strcmp(protocol, "HTTP/1.1") || !strcmp(protocol, "RTSP/1.0"));
++    if (!cseq && !raop->hls_support && !ble && !is_info_probe) {
+         logger_log(raop->logger, LOGGER_INFO, "ignoring AirPlay video streaming request (use option -hls to activate HLS support)");
+         return;
+     }
+@@ -401,7 +412,9 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
+ 
+     logger_log(raop->logger, LOGGER_DEBUG, "Handling request %s with URL %s", method, url);
+     raop_handler_t handler = NULL;
+-    if (!hls_request && !strcmp(protocol, "RTSP/1.0")) {
++    /* AirPlay 2 senders issue the initial GET /info over plain HTTP/1.1 rather than
++     * RTSP/1.0; without this they got no response and gave up on the session. */
++    if (!hls_request && (!strcmp(protocol, "RTSP/1.0") || !strcmp(protocol, "HTTP/1.1"))) {
+         if (!strcmp(method, "POST")) {
+             if (!strcmp(url, "/feedback")) {
+                 handler = &raop_handler_feedback;
+@@ -424,6 +437,8 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
              }
          } else if (!strcmp(method, "OPTIONS")) {
              handler = &raop_handler_options;
@@ -101,7 +126,7 @@ index 45a3e4c..985f30f 100644
          char *str = utils_data_to_string(data,12,12);
          logger_log(raop_buffer->logger, LOGGER_INFO, "encrypted 12 byte header %s", str);
 diff --git a/lib/raop_handlers.h b/lib/raop_handlers.h
-index 5037e68..e8b58bd 100644
+index 5037e68..689f8cf 100644
 --- a/lib/raop_handlers.h
 +++ b/lib/raop_handlers.h
 @@ -446,8 +446,31 @@ raop_handler_pairsetup(raop_conn_t *conn,
@@ -116,7 +141,7 @@ index 5037e68..e8b58bd 100644
 +    /* AirPlay 2 senders (iOS 13+, Music Assistant's cliairplay) use HAP: a TLV8
 +     * exchange starting with the Method tag (0x00). The legacy 32-byte flow below
 +     * is what older senders use. */
-+    if (data && datalen >= 4 && (unsigned char) data[0] == 0x00) {
++    if (hap_looks_like_pairing((const unsigned char *) data, datalen)) {
 +        unsigned char *tlv_out = NULL;
 +        int tlv_out_len = 0;
 +        if (conn->hap_pair &&
@@ -404,10 +429,10 @@ index 7da009d..75d5944 100644
          MUTEX_UNLOCK(raop_ntp->wait_mutex);
      }
 diff --git a/lib/srp.c b/lib/srp.c
-index 7fd752c..501c19c 100644
+index 7fd752c..e84c809 100644
 --- a/lib/srp.c
 +++ b/lib/srp.c
-@@ -1184,3 +1184,327 @@ void srp_user_verify_session( struct SRPUser * usr, const unsigned char * bytes_
+@@ -1184,3 +1184,384 @@ void srp_user_verify_session( struct SRPUser * usr, const unsigned char * bytes_
          usr->authenticated = 1;
  }
  #endif  /*end removed section 4 */
@@ -480,6 +505,27 @@ index 7fd752c..501c19c 100644
 +    return NULL;
 +}
 +
++/* TLV8 splits values longer than 255 bytes into several chunks of the same tag;
++ * concatenate them (the server public key/proof are 384/64 bytes). */
++static int hap_tlv_get_concat(const unsigned char *buf, int len, int type,
++                              unsigned char *out, int out_cap, int *out_len)
++{
++    int i = 0, n = 0;
++    while (i + 2 <= len) {
++        int t = buf[i];
++        int l = buf[i + 1];
++        if (i + 2 + l > len) break;
++        if (t == type) {
++            if (n + l > out_cap) return -1;
++            memcpy(out + n, buf + i + 2, (size_t) l);
++            n += l;
++        }
++        i += 2 + l;
++    }
++    *out_len = n;
++    return n > 0 ? 0 : -1;
++}
++
 +/* ---------- SRP helpers ---------- */
 +
 +static int hap_sha512(const unsigned char *data, int len, unsigned char out[HAP_HASH_LEN])
@@ -535,6 +581,23 @@ index 7fd752c..501c19c 100644
 +}
 +
 +/* ---------- public API ---------- */
++
++/* Does this body parse as a TLV8 pair-setup message (i.e. carries a State tag)?
++ * AirPlay 2 senders order the TLVs differently, so the first byte alone is not a
++ * reliable discriminator against the legacy 32-byte pairing. */
++int hap_looks_like_pairing(const unsigned char *buf, int len)
++{
++    int i = 0, saw_state = 0;
++    if (!buf || len < 4 || len == 32) return 0;
++    while (i + 2 <= len) {
++        int t = buf[i];
++        int l = buf[i + 1];
++        if (i + 2 + l > len) return 0;      /* not well-formed TLV */
++        if (t == HAP_TLV_STATE && l == 1) saw_state = 1;
++        i += 2 + l;
++    }
++    return saw_state;
++}
 +
 +hap_pair_t *hap_pair_create(void)
 +{
@@ -604,6 +667,7 @@ index 7fd752c..501c19c 100644
 +    if (!BN_mod_add(pair->B, k, tmp, N, ctx)) goto done;      /* B */
 +
 +    bnum_len = BN_bn2bin(pair->B, bnum);
++
 +    buf = (unsigned char *) calloc(1, 512);
 +    if (!buf) goto done;
 +    if (hap_tlv_put(buf, 512, &off, HAP_TLV_STATE, (const unsigned char *) "\x02", 1)) goto done;
@@ -637,15 +701,15 @@ index 7fd752c..501c19c 100644
 +    unsigned char expected[HAP_HASH_LEN], server_proof[HAP_HASH_LEN];
 +    unsigned char abuf[HAP_N_BYTES], bbuf[HAP_N_BYTES];
 +    unsigned char *buf = NULL;
-+    const unsigned char *a_val, *proof;
++    unsigned char a_val[HAP_N_BYTES], proof_val[HAP_HASH_LEN];
 +    int a_len = 0, proof_len = 0, off = 0, rc = -1;
 +    int abuf_len, bbuf_len;
 +    unsigned int md_len = 0;
 +
 +    if (!ctx || !md) goto done;
-+    a_val = hap_tlv_get(in, in_len, HAP_TLV_PUBLIC_KEY, &a_len);
-+    proof = hap_tlv_get(in, in_len, HAP_TLV_PROOF, &proof_len);
-+    if (!a_val || a_len <= 0 || !proof || proof_len != HAP_HASH_LEN) goto done;
++    if (hap_tlv_get_concat(in, in_len, HAP_TLV_PUBLIC_KEY, a_val, sizeof(a_val), &a_len)) goto done;
++    if (hap_tlv_get_concat(in, in_len, HAP_TLV_PROOF, proof_val, sizeof(proof_val), &proof_len)) goto done;
++    if (a_len <= 0 || proof_len != HAP_HASH_LEN) goto done;
 +    if (!pair->b || !pair->v || !pair->B) goto done;
 +
 +    if (!BN_hex2bn(&N, srp_n_hex_3072)) goto done;
@@ -670,6 +734,24 @@ index 7fd752c..501c19c 100644
 +
 +    /* K = SHA512(S) with minimal-length big-endian S */
 +    if (!hap_hash_bn(S, pair->secret)) goto done;
++#ifdef HAP_DEBUG
++    {
++        char l[4096]; int o = 0;
++        o += sprintf(l + o, "HAP_DEBUG salt=");
++        for (int i = 0; i < (int) sizeof(pair->salt); i++) o += sprintf(l + o, "%02x", pair->salt[i]);
++        o += sprintf(l + o, " v=");
++        o += BN_bn2hex(pair->v) ? sprintf(l + o, "%s", BN_bn2hex(pair->v)) : 0;
++        o += sprintf(l + o, " B=");
++        o += sprintf(l + o, "%s", BN_bn2hex(pair->B));
++        o += sprintf(l + o, " A=");
++        o += sprintf(l + o, "%s", BN_bn2hex(A));
++        o += sprintf(l + o, " K=");
++        for (int i = 0; i < HAP_HASH_LEN; i++) o += sprintf(l + o, "%02x", pair->secret[i]);
++        fprintf(stderr, "%s\n", l);
++    }
++#endif
++
++
 +
 +    /* M1 = SHA512( H(N) xor H(g) || H(user) || salt || A || B || K ) */
 +    if (!hap_hash_bn(N, hash_n) || !hap_hash_bn(g, hash_g)) goto done;
@@ -687,7 +769,7 @@ index 7fd752c..501c19c 100644
 +        EVP_DigestUpdate(md, pair->secret, HAP_HASH_LEN) != 1 ||
 +        EVP_DigestFinal_ex(md, expected, &md_len) != 1) goto done;
 +
-+    if (memcmp(expected, proof, HAP_HASH_LEN) != 0) {
++    if (memcmp(expected, proof_val, HAP_HASH_LEN) != 0) {
 +        /* wrong proof: report an authentication error to the client */
 +        buf = (unsigned char *) calloc(1, 8);
 +        if (!buf) goto done;
@@ -700,7 +782,7 @@ index 7fd752c..501c19c 100644
 +    /* M2 = SHA512(A || M1 || K) */
 +    if (EVP_DigestInit_ex(md, EVP_sha512(), NULL) != 1 ||
 +        EVP_DigestUpdate(md, abuf, (size_t) abuf_len) != 1 ||
-+        EVP_DigestUpdate(md, proof, HAP_HASH_LEN) != 1 ||
++        EVP_DigestUpdate(md, proof_val, HAP_HASH_LEN) != 1 ||
 +        EVP_DigestUpdate(md, pair->secret, HAP_HASH_LEN) != 1 ||
 +        EVP_DigestFinal_ex(md, server_proof, &md_len) != 1) goto done;
 +
@@ -736,10 +818,10 @@ index 7fd752c..501c19c 100644
 +    return -1;
 +}
 diff --git a/lib/srp.h b/lib/srp.h
-index 6af96a7..e8a75be 100644
+index 6af96a7..6255d4a 100644
 --- a/lib/srp.h
 +++ b/lib/srp.h
-@@ -233,4 +233,16 @@ void                  srp_user_process_challenge( struct SRPUser * usr,
+@@ -233,4 +233,17 @@ void                  srp_user_process_challenge( struct SRPUser * usr,
  void                  srp_user_verify_session( struct SRPUser * usr, const unsigned char * bytes_HAMK );
  
  #endif  /*end removed section 4*/
@@ -748,6 +830,7 @@ index 6af96a7..e8a75be 100644
 +typedef struct hap_pair_s hap_pair_t;
 +#define HAP_SECRET_LEN 64
 +
++int hap_looks_like_pairing(const unsigned char *buf, int len);
 +hap_pair_t *hap_pair_create(void);
 +void hap_pair_destroy(hap_pair_t *pair);
 +int hap_pair_setup(hap_pair_t *pair, const unsigned char *in, int in_len,
