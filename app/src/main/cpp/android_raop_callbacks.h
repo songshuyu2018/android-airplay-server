@@ -28,12 +28,17 @@ typedef struct {
     jmethodID on_coverart;
     jmethodID on_progress;
     jmethodID on_dacp_id;
+    jmethodID on_audio_flush;
+    jmethodID on_audio_resume;
     jmethodID on_mirror_running;
     jmethodID on_video_play;
     jmethodID on_video_scrub;
     jmethodID on_video_rate;
     jmethodID on_video_stop;
     jmethodID on_video_session_poll;
+    /* set by a flush, cleared by the next audio packet: distinguishes a pause
+     * (sender stays silent) from a seek (audio resumes immediately) */
+    int audio_resume_pending;
     int h265_enabled;
     int require_pin;
     char *registered_keys[16];
