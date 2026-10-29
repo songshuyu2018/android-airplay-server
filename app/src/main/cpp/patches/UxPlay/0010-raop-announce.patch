@@ -1,394 +1,12 @@
-diff --git a/lib/hap_srp.c b/lib/hap_srp.c
-new file mode 100644
-index 0000000..d1454be
---- /dev/null
-+++ b/lib/hap_srp.c
-@@ -0,0 +1,336 @@
-+/*
-+ * HAP transient pair-setup server (SRP-6a, SHA-512, RFC 5054 3072-bit group).
-+ *
-+ * Byte conventions match the reference AirPlay 2 client (pair_ap / owntone /
-+ * Music Assistant's cliairplay, verified against real devices):
-+ *   k = SHA512(PAD(N) || PAD(g))  and  u = SHA512(PAD(A) || PAD(B)), both padded
-+ *   to the 384-byte modulus; x, K, M1 and M2 hash minimal-length big-endian
-+ *   numbers, and the salt is used as the raw TLV bytes.
-+ */
-+#include <stdlib.h>
-+#include <string.h>
-+
-+#include <openssl/bn.h>
-+#include <openssl/evp.h>
-+#include <openssl/rand.h>
-+
-+#include "hap_srp.h"
-+
-+#define SRP_N_BYTES   384
-+#define SRP_HASH_LEN  64            /* SHA-512 */
-+#define SRP_USERNAME  "Pair-Setup"
-+#define HAP_TRANSIENT_PIN "3939"
-+
-+/* TLV8 tags */
-+#define TLV_METHOD     0x00
-+#define TLV_IDENTIFIER 0x01
-+#define TLV_SALT       0x02
-+#define TLV_PUBLIC_KEY 0x03
-+#define TLV_PROOF      0x04
-+#define TLV_STATE      0x06
-+#define TLV_ERROR      0x07
-+#define TLV_FLAGS      0x13
-+
-+static const char srp_n_hex_3072[] =
-+    "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3DC2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD961C62F356208552BB9ED529077096966D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3BE39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9DE2BCBF6955817183995497CEA956AE515D2261898FA051015728E5A8AAAC42DAD33170D04507A33A85521ABDF1CBA64ECFB850458DBEF0A8AEA71575D060C7DB3970F85A6E1E4C7ABF5AE8CDB0933D71E8C94E04A25619DCEE3D2261AD2EE6BF12FFA06D98A0864D87602733EC86A64521F2B18177B200CBBE117577A615D6C770988C0BAD946E208E24FA074E5AB3143DB5BFCE0FD108E4B82D120A93AD2CAFFFFFFFFFFFFFFFF";
-+
-+struct hap_pair_s {
-+    unsigned char salt[16];
-+    BIGNUM *b;              /* server ephemeral private */
-+    BIGNUM *v;              /* verifier derived from the transient PIN */
-+    BIGNUM *B;              /* server public */
-+    unsigned char secret[HAP_SECRET_LEN];
-+    int done;
-+};
-+
-+/* ---------- TLV8 helpers ---------- */
-+
-+static int tlv_put(unsigned char *buf, int cap, int *off, int type,
-+                   const unsigned char *val, int len)
-+{
-+    /* TLV8: values longer than 255 bytes are split into chunks of 255 */
-+    do {
-+        int chunk = len > 255 ? 255 : len;
-+        if (*off + 2 + chunk > cap) return -1;
-+        buf[(*off)++] = (unsigned char) type;
-+        buf[(*off)++] = (unsigned char) chunk;
-+        if (chunk) memcpy(buf + *off, val, (size_t) chunk);
-+        *off += chunk;
-+        val += chunk;
-+        len -= chunk;
-+    } while (len > 0);
-+    return 0;
-+}
-+
-+static const unsigned char *tlv_get(const unsigned char *buf, int len, int type, int *out_len)
-+{
-+    int i = 0;
-+    while (i + 2 <= len) {
-+        int t = buf[i];
-+        int l = buf[i + 1];
-+        if (i + 2 + l > len) break;
-+        if (t == type) {
-+            *out_len = l;
-+            return buf + i + 2;
-+        }
-+        i += 2 + l;
-+    }
-+    *out_len = 0;
-+    return NULL;
-+}
-+
-+/* ---------- SRP helpers ---------- */
-+
-+static int sha512(const unsigned char *data, int len, unsigned char out[SRP_HASH_LEN])
-+{
-+    unsigned int md_len = 0;
-+    return EVP_Digest(data, (size_t) len, out, &md_len, EVP_sha512(), NULL) == 1;
-+}
-+
-+static int hash_two_padded(const BIGNUM *n1, const BIGNUM *n2, unsigned char out[SRP_HASH_LEN])
-+{
-+    unsigned char buf[2 * SRP_N_BYTES];
-+    int ok;
-+    if (BN_bn2binpad(n1, buf, SRP_N_BYTES) != SRP_N_BYTES) return 0;
-+    if (BN_bn2binpad(n2, buf + SRP_N_BYTES, SRP_N_BYTES) != SRP_N_BYTES) return 0;
-+    ok = sha512(buf, sizeof(buf), out);
-+    OPENSSL_cleanse(buf, sizeof(buf));
-+    return ok;
-+}
-+
-+static int hash_bn(const BIGNUM *bn, unsigned char out[SRP_HASH_LEN])
-+{
-+    unsigned char buf[SRP_N_BYTES];
-+    int len = BN_num_bytes(bn);
-+    int ok;
-+    if (len > (int) sizeof(buf) || len < 0) return 0;
-+    BN_bn2bin(bn, buf);
-+    ok = sha512(buf, len, out);
-+    OPENSSL_cleanse(buf, sizeof(buf));
-+    return ok;
-+}
-+
-+/* x = SHA512(salt || SHA512("Pair-Setup:3939")) */
-+static int srp_compute_x(const unsigned char *salt, int salt_len, BIGNUM **x_out)
-+{
-+    unsigned char digest[SRP_HASH_LEN];
-+    char userpass[64];
-+    int up_len = snprintf(userpass, sizeof(userpass), "%s:%s", SRP_USERNAME, HAP_TRANSIENT_PIN);
-+    EVP_MD_CTX *md = EVP_MD_CTX_new();
-+    unsigned int md_len = 0;
-+    int ok = 0;
-+
-+    if (!md || up_len <= 0 || up_len >= (int) sizeof(userpass)) goto done;
-+    if (EVP_Digest(userpass, (size_t) up_len, digest, &md_len, EVP_sha512(), NULL) != 1) goto done;
-+    if (EVP_DigestInit_ex(md, EVP_sha512(), NULL) != 1 ||
-+        EVP_DigestUpdate(md, salt, (size_t) salt_len) != 1 ||
-+        EVP_DigestUpdate(md, digest, SRP_HASH_LEN) != 1 ||
-+        EVP_DigestFinal_ex(md, digest, &md_len) != 1) goto done;
-+    *x_out = BN_bin2bn(digest, SRP_HASH_LEN, NULL);
-+    ok = (*x_out != NULL);
-+done:
-+    EVP_MD_CTX_free(md);
-+    return ok;
-+}
-+
-+/* ---------- public API ---------- */
-+
-+hap_pair_t *hap_pair_create(void)
-+{
-+    return (hap_pair_t *) calloc(1, sizeof(hap_pair_t));
-+}
-+
-+void hap_pair_destroy(hap_pair_t *pair)
-+{
-+    if (!pair) return;
-+    BN_clear_free(pair->b);
-+    BN_clear_free(pair->v);
-+    BN_free(pair->B);
-+    OPENSSL_cleanse(pair->secret, sizeof(pair->secret));
-+    free(pair);
-+}
-+
-+int hap_pair_is_done(hap_pair_t *pair)
-+{
-+    return pair && pair->done;
-+}
-+
-+int hap_pair_get_secret(hap_pair_t *pair, unsigned char secret[HAP_SECRET_LEN])
-+{
-+    if (!pair || !pair->done) return -1;
-+    memcpy(secret, pair->secret, HAP_SECRET_LEN);
-+    return 0;
-+}
-+
-+/* M1: client asks for the challenge -> M2: salt + server public key B */
-+static int handle_m1(hap_pair_t *pair, unsigned char **out, int *out_len)
-+{
-+    BN_CTX *ctx = BN_CTX_new();
-+    EVP_MD_CTX *md = EVP_MD_CTX_new();
-+    BIGNUM *N = NULL, *g = NULL, *x = NULL, *k = NULL, *tmp = NULL;
-+    unsigned char digest[SRP_HASH_LEN];
-+    unsigned char bnum[SRP_N_BYTES];
-+    unsigned char *buf = NULL;
-+    int off = 0, rc = -1, bnum_len;
-+
-+    if (!ctx || !md) goto done;
-+    if (!BN_hex2bn(&N, srp_n_hex_3072)) goto done;
-+    g = BN_new();
-+    x = BN_new();
-+    k = BN_new();
-+    tmp = BN_new();
-+    if (!g || !x || !k || !tmp) goto done;
-+    if (!BN_set_word(g, 5)) goto done;
-+
-+    /* salt + verifier for the fixed transient PIN */
-+    if (RAND_bytes(pair->salt, sizeof(pair->salt)) != 1) goto done;
-+    if (!srp_compute_x(pair->salt, sizeof(pair->salt), &x)) goto done;
-+    if (!pair->v) pair->v = BN_new();
-+    if (!pair->v || !BN_mod_exp(pair->v, g, x, N, ctx)) goto done;
-+
-+    /* k = H(PAD(N) || PAD(g)) */
-+    if (!hash_two_padded(N, g, digest)) goto done;
-+    k = BN_bin2bn(digest, SRP_HASH_LEN, k);
-+    if (!k) goto done;
-+
-+    /* B = (k*v + g^b) mod N */
-+    if (!pair->b) pair->b = BN_new();
-+    if (!pair->B) pair->B = BN_new();
-+    if (!pair->b || !pair->B) goto done;
-+    if (!BN_rand(pair->b, 256, BN_RAND_TOP_ONE, BN_RAND_BOTTOM_ANY)) goto done;
-+    if (!BN_mod_exp(tmp, g, pair->b, N, ctx)) goto done;     /* g^b */
-+    if (!BN_mod_mul(k, k, pair->v, N, ctx)) goto done;        /* k*v */
-+    if (!BN_mod_add(pair->B, k, tmp, N, ctx)) goto done;      /* B */
-+
-+    bnum_len = BN_bn2bin(pair->B, bnum);
-+    buf = (unsigned char *) calloc(1, 512);
-+    if (!buf) goto done;
-+    if (tlv_put(buf, 512, &off, TLV_STATE, (const unsigned char *) "\x02", 1)) goto done;
-+    if (tlv_put(buf, 512, &off, TLV_SALT, pair->salt, (int) sizeof(pair->salt))) goto done;
-+    if (tlv_put(buf, 512, &off, TLV_PUBLIC_KEY, bnum, bnum_len)) goto done;
-+    *out = buf;
-+    *out_len = off;
-+    buf = NULL;
-+    rc = 0;
-+done:
-+    free(buf);
-+    BN_free(N);
-+    BN_free(g);
-+    BN_free(x);
-+    BN_free(k);
-+    BN_free(tmp);
-+    EVP_MD_CTX_free(md);
-+    BN_CTX_free(ctx);
-+    return rc;
-+}
-+
-+/* M3: client sends A + proof M1 -> M4: server proof M2 */
-+static int handle_m3(hap_pair_t *pair, const unsigned char *in, int in_len,
-+                     unsigned char **out, int *out_len)
-+{
-+    BN_CTX *ctx = BN_CTX_new();
-+    EVP_MD_CTX *md = EVP_MD_CTX_new();
-+    BIGNUM *N = NULL, *g = NULL, *A = NULL, *u = NULL, *S = NULL, *t1 = NULL, *t2 = NULL;
-+    unsigned char digest[SRP_HASH_LEN], hash_n[SRP_HASH_LEN], hash_g[SRP_HASH_LEN];
-+    unsigned char hash_user[SRP_HASH_LEN];
-+    unsigned char expected[SRP_HASH_LEN], server_proof[SRP_HASH_LEN];
-+    unsigned char abuf[SRP_N_BYTES], bbuf[SRP_N_BYTES];
-+    unsigned char *buf = NULL;
-+    const unsigned char *a_val, *proof;
-+    int a_len = 0, proof_len = 0, off = 0, rc = -1;
-+    int abuf_len, bbuf_len;
-+    unsigned int md_len = 0;
-+
-+    if (!ctx || !md) goto done;
-+    a_val = tlv_get(in, in_len, TLV_PUBLIC_KEY, &a_len);
-+    proof = tlv_get(in, in_len, TLV_PROOF, &proof_len);
-+    if (!a_val || a_len <= 0 || !proof || proof_len != SRP_HASH_LEN) goto done;
-+    if (!pair->b || !pair->v || !pair->B) goto done;
-+
-+    if (!BN_hex2bn(&N, srp_n_hex_3072)) goto done;
-+    g = BN_new();
-+    A = BN_bin2bn(a_val, a_len, NULL);
-+    u = BN_new();
-+    S = BN_new();
-+    t1 = BN_new();
-+    t2 = BN_new();
-+    if (!g || !A || !u || !S || !t1 || !t2) goto done;
-+    if (!BN_set_word(g, 5)) goto done;
-+
-+    /* u = H(PAD(A) || PAD(B)) */
-+    if (!hash_two_padded(A, pair->B, digest)) goto done;
-+    u = BN_bin2bn(digest, SRP_HASH_LEN, u);
-+    if (!u || BN_is_zero(u)) goto done;
-+
-+    /* S = (A * v^u)^b mod N */
-+    if (!BN_mod_exp(t1, pair->v, u, N, ctx)) goto done;       /* v^u */
-+    if (!BN_mod_mul(t1, A, t1, N, ctx)) goto done;            /* A * v^u */
-+    if (!BN_mod_exp(S, t1, pair->b, N, ctx)) goto done;
-+
-+    /* K = SHA512(S) with minimal-length big-endian S */
-+    if (!hash_bn(S, pair->secret)) goto done;
-+
-+    /* M1 = SHA512( H(N) xor H(g) || H(user) || salt || A || B || K ) */
-+    if (!hash_bn(N, hash_n) || !hash_bn(g, hash_g)) goto done;
-+    for (int i = 0; i < SRP_HASH_LEN; i++) digest[i] = hash_n[i] ^ hash_g[i];
-+    if (!sha512((const unsigned char *) SRP_USERNAME, (int) strlen(SRP_USERNAME), hash_user)) goto done;
-+    abuf_len = BN_bn2bin(A, abuf);
-+    bbuf_len = BN_bn2bin(pair->B, bbuf);
-+
-+    if (EVP_DigestInit_ex(md, EVP_sha512(), NULL) != 1 ||
-+        EVP_DigestUpdate(md, digest, SRP_HASH_LEN) != 1 ||
-+        EVP_DigestUpdate(md, hash_user, SRP_HASH_LEN) != 1 ||
-+        EVP_DigestUpdate(md, pair->salt, sizeof(pair->salt)) != 1 ||
-+        EVP_DigestUpdate(md, abuf, (size_t) abuf_len) != 1 ||
-+        EVP_DigestUpdate(md, bbuf, (size_t) bbuf_len) != 1 ||
-+        EVP_DigestUpdate(md, pair->secret, SRP_HASH_LEN) != 1 ||
-+        EVP_DigestFinal_ex(md, expected, &md_len) != 1) goto done;
-+
-+    if (memcmp(expected, proof, SRP_HASH_LEN) != 0) {
-+        /* wrong proof: report an authentication error to the client */
-+        buf = (unsigned char *) calloc(1, 8);
-+        if (!buf) goto done;
-+        if (tlv_put(buf, 8, &off, TLV_STATE, (const unsigned char *) "\x04", 1)) goto done;
-+        if (tlv_put(buf, 8, &off, TLV_ERROR, (const unsigned char *) "\x02", 1)) goto done;
-+        *out = buf; *out_len = off; buf = NULL; rc = 0;
-+        goto done;
-+    }
-+
-+    /* M2 = SHA512(A || M1 || K) */
-+    if (EVP_DigestInit_ex(md, EVP_sha512(), NULL) != 1 ||
-+        EVP_DigestUpdate(md, abuf, (size_t) abuf_len) != 1 ||
-+        EVP_DigestUpdate(md, proof, SRP_HASH_LEN) != 1 ||
-+        EVP_DigestUpdate(md, pair->secret, SRP_HASH_LEN) != 1 ||
-+        EVP_DigestFinal_ex(md, server_proof, &md_len) != 1) goto done;
-+
-+    buf = (unsigned char *) calloc(1, 128);
-+    if (!buf) goto done;
-+    if (tlv_put(buf, 128, &off, TLV_STATE, (const unsigned char *) "\x04", 1)) goto done;
-+    if (tlv_put(buf, 128, &off, TLV_PROOF, server_proof, SRP_HASH_LEN)) goto done;
-+    pair->done = 1;
-+    *out = buf;
-+    *out_len = off;
-+    buf = NULL;
-+    rc = 0;
-+done:
-+    free(buf);
-+    BN_free(N); BN_free(g); BN_free(A); BN_free(u); BN_free(S); BN_free(t1); BN_free(t2);
-+    EVP_MD_CTX_free(md);
-+    BN_CTX_free(ctx);
-+    return rc;
-+}
-+
-+int hap_pair_setup(hap_pair_t *pair, const unsigned char *in, int in_len,
-+                   unsigned char **out, int *out_len)
-+{
-+    const unsigned char *state;
-+    int state_len = 0;
-+
-+    if (!pair || !in || in_len <= 0) return -1;
-+    state = tlv_get(in, in_len, TLV_STATE, &state_len);
-+    if (!state || state_len != 1) return -1;
-+
-+    if (state[0] == 1) return handle_m1(pair, out, out_len);
-+    if (state[0] == 3) return handle_m3(pair, in, in_len, out, out_len);
-+    return -1;
-+}
-diff --git a/lib/hap_srp.h b/lib/hap_srp.h
-new file mode 100644
-index 0000000..600f63a
---- /dev/null
-+++ b/lib/hap_srp.h
-@@ -0,0 +1,34 @@
-+/*
-+ * HAP (HomeKit Accessory Protocol) transient pair-setup for AirPlay 2.
-+ *
-+ * Modern AirPlay 2 senders (Music Assistant's cliairplay, iOS 13+) authenticate
-+ * with HAP: a TLV8 pair-setup that runs SRP-6a over the RFC 5054 3072-bit group
-+ * with SHA-512 and the fixed transient PIN "3939", followed by pair-verify.
-+ *
-+ * UxPlay only implemented the older 32-byte pairing, so those senders gave up
-+ * on AirPlay 2 and fell back to RAOP. This module provides the server side of
-+ * the transient pair-setup exchange.
-+ */
-+#ifndef HAP_SRP_H
-+#define HAP_SRP_H
-+
-+#include <stdint.h>
-+
-+#define HAP_SECRET_LEN 64
-+
-+typedef struct hap_pair_s hap_pair_t;
-+
-+hap_pair_t *hap_pair_create(void);
-+void hap_pair_destroy(hap_pair_t *pair);
-+
-+/* Handle one TLV8 pair-setup request body. On success returns 0 and hands back a
-+ * malloc'd TLV8 response in *out / *out_len (caller frees). */
-+int hap_pair_setup(hap_pair_t *pair, const unsigned char *in, int in_len,
-+                   unsigned char **out, int *out_len);
-+
-+/* 64-byte shared secret once pair-setup has completed. */
-+int hap_pair_get_secret(hap_pair_t *pair, unsigned char secret[HAP_SECRET_LEN]);
-+
-+int hap_pair_is_done(hap_pair_t *pair);
-+
-+#endif  /* HAP_SRP_H */
 diff --git a/lib/raop.c b/lib/raop.c
-index 7098fae..9696474 100644
+index 7098fae..9ceed67 100644
 --- a/lib/raop.c
 +++ b/lib/raop.c
 @@ -22,6 +22,7 @@
  #include "raop.h"
  #include "raop_rtp.h"
  #include "pairing.h"
-+#include "hap_srp.h"
++#include "srp.h"
  #include "httpd.h"
  
  #include "global.h"
@@ -785,3 +403,356 @@ index 7da009d..75d5944 100644
          pthread_cond_timedwait(&raop_ntp->wait_cond, &raop_ntp->wait_mutex, &wait_time);
          MUTEX_UNLOCK(raop_ntp->wait_mutex);
      }
+diff --git a/lib/srp.c b/lib/srp.c
+index 7fd752c..501c19c 100644
+--- a/lib/srp.c
++++ b/lib/srp.c
+@@ -1184,3 +1184,327 @@ void srp_user_verify_session( struct SRPUser * usr, const unsigned char * bytes_
+         usr->authenticated = 1;
+ }
+ #endif  /*end removed section 4 */
++
++/* ===== AirPlay 2 HAP transient pair-setup (SRP-6a, SHA-512, 3072-bit) =====
++ * UxPlay only implemented the legacy 32-byte pairing, so AirPlay 2 senders
++ * (iOS 13+, Music Assistant's cliairplay) never completed HAP and fell back to
++ * RAOP. This is the device side of the transient pair-setup exchange.
++ */
++#define HAP_N_BYTES   384
++#define HAP_HASH_LEN  64            /* SHA-512 */
++#define HAP_USERNAME  "Pair-Setup"
++#define HAP_TRANSIENT_PIN "3939"
++
++/* TLV8 tags */
++#define HAP_TLV_METHOD     0x00
++#define HAP_TLV_IDENTIFIER 0x01
++#define HAP_TLV_SALT       0x02
++#define HAP_TLV_PUBLIC_KEY 0x03
++#define HAP_TLV_PROOF      0x04
++#define HAP_TLV_STATE      0x06
++#define HAP_TLV_ERROR      0x07
++#define HAP_TLV_FLAGS      0x13
++
++static const char srp_n_hex_3072[] =
++    "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3DC2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD961C62F356208552BB9ED529077096966D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3BE39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9DE2BCBF6955817183995497CEA956AE515D2261898FA051015728E5A8AAAC42DAD33170D04507A33A85521ABDF1CBA64ECFB850458DBEF0A8AEA71575D060C7DB3970F85A6E1E4C7ABF5AE8CDB0933D71E8C94E04A25619DCEE3D2261AD2EE6BF12FFA06D98A0864D87602733EC86A64521F2B18177B200CBBE117577A615D6C770988C0BAD946E208E24FA074E5AB3143DB5BFCE0FD108E4B82D120A93AD2CAFFFFFFFFFFFFFFFF";
++
++struct hap_pair_s {
++    unsigned char salt[16];
++    BIGNUM *b;              /* server ephemeral private */
++    BIGNUM *v;              /* verifier derived from the transient PIN */
++    BIGNUM *B;              /* server public */
++    unsigned char secret[HAP_SECRET_LEN];
++    int done;
++};
++
++/* ---------- TLV8 helpers ---------- */
++
++static int hap_tlv_put(unsigned char *buf, int cap, int *off, int type,
++                   const unsigned char *val, int len)
++{
++    /* TLV8: values longer than 255 bytes are split into chunks of 255 */
++    do {
++        int chunk = len > 255 ? 255 : len;
++        if (*off + 2 + chunk > cap) return -1;
++        buf[(*off)++] = (unsigned char) type;
++        buf[(*off)++] = (unsigned char) chunk;
++        if (chunk) memcpy(buf + *off, val, (size_t) chunk);
++        *off += chunk;
++        val += chunk;
++        len -= chunk;
++    } while (len > 0);
++    return 0;
++}
++
++static const unsigned char *hap_tlv_get(const unsigned char *buf, int len, int type, int *out_len)
++{
++    int i = 0;
++    while (i + 2 <= len) {
++        int t = buf[i];
++        int l = buf[i + 1];
++        if (i + 2 + l > len) break;
++        if (t == type) {
++            *out_len = l;
++            return buf + i + 2;
++        }
++        i += 2 + l;
++    }
++    *out_len = 0;
++    return NULL;
++}
++
++/* ---------- SRP helpers ---------- */
++
++static int hap_sha512(const unsigned char *data, int len, unsigned char out[HAP_HASH_LEN])
++{
++    unsigned int md_len = 0;
++    return EVP_Digest(data, (size_t) len, out, &md_len, EVP_sha512(), NULL) == 1;
++}
++
++static int hap_hash_two_padded(const BIGNUM *n1, const BIGNUM *n2, unsigned char out[HAP_HASH_LEN])
++{
++    unsigned char buf[2 * HAP_N_BYTES];
++    int ok;
++    if (BN_bn2binpad(n1, buf, HAP_N_BYTES) != HAP_N_BYTES) return 0;
++    if (BN_bn2binpad(n2, buf + HAP_N_BYTES, HAP_N_BYTES) != HAP_N_BYTES) return 0;
++    ok = hap_sha512(buf, sizeof(buf), out);
++    OPENSSL_cleanse(buf, sizeof(buf));
++    return ok;
++}
++
++static int hap_hash_bn(const BIGNUM *bn, unsigned char out[HAP_HASH_LEN])
++{
++    unsigned char buf[HAP_N_BYTES];
++    int len = BN_num_bytes(bn);
++    int ok;
++    if (len > (int) sizeof(buf) || len < 0) return 0;
++    BN_bn2bin(bn, buf);
++    ok = hap_sha512(buf, len, out);
++    OPENSSL_cleanse(buf, sizeof(buf));
++    return ok;
++}
++
++/* x = SHA512(salt || SHA512("Pair-Setup:3939")) */
++static int hap_compute_x(const unsigned char *salt, int salt_len, BIGNUM **x_out)
++{
++    unsigned char digest[HAP_HASH_LEN];
++    char userpass[64];
++    int up_len = snprintf(userpass, sizeof(userpass), "%s:%s", HAP_USERNAME, HAP_TRANSIENT_PIN);
++    EVP_MD_CTX *md = EVP_MD_CTX_new();
++    unsigned int md_len = 0;
++    int ok = 0;
++
++    if (!md || up_len <= 0 || up_len >= (int) sizeof(userpass)) goto done;
++    if (EVP_Digest(userpass, (size_t) up_len, digest, &md_len, EVP_sha512(), NULL) != 1) goto done;
++    if (EVP_DigestInit_ex(md, EVP_sha512(), NULL) != 1 ||
++        EVP_DigestUpdate(md, salt, (size_t) salt_len) != 1 ||
++        EVP_DigestUpdate(md, digest, HAP_HASH_LEN) != 1 ||
++        EVP_DigestFinal_ex(md, digest, &md_len) != 1) goto done;
++    *x_out = BN_bin2bn(digest, HAP_HASH_LEN, NULL);
++    ok = (*x_out != NULL);
++done:
++    EVP_MD_CTX_free(md);
++    return ok;
++}
++
++/* ---------- public API ---------- */
++
++hap_pair_t *hap_pair_create(void)
++{
++    return (hap_pair_t *) calloc(1, sizeof(hap_pair_t));
++}
++
++void hap_pair_destroy(hap_pair_t *pair)
++{
++    if (!pair) return;
++    BN_clear_free(pair->b);
++    BN_clear_free(pair->v);
++    BN_free(pair->B);
++    OPENSSL_cleanse(pair->secret, sizeof(pair->secret));
++    free(pair);
++}
++
++int hap_pair_is_done(hap_pair_t *pair)
++{
++    return pair && pair->done;
++}
++
++int hap_pair_get_secret(hap_pair_t *pair, unsigned char secret[HAP_SECRET_LEN])
++{
++    if (!pair || !pair->done) return -1;
++    memcpy(secret, pair->secret, HAP_SECRET_LEN);
++    return 0;
++}
++
++/* M1: client asks for the challenge -> M2: salt + server public key B */
++static int hap_handle_m1(hap_pair_t *pair, unsigned char **out, int *out_len)
++{
++    BN_CTX *ctx = BN_CTX_new();
++    EVP_MD_CTX *md = EVP_MD_CTX_new();
++    BIGNUM *N = NULL, *g = NULL, *x = NULL, *k = NULL, *tmp = NULL;
++    unsigned char digest[HAP_HASH_LEN];
++    unsigned char bnum[HAP_N_BYTES];
++    unsigned char *buf = NULL;
++    int off = 0, rc = -1, bnum_len;
++
++    if (!ctx || !md) goto done;
++    if (!BN_hex2bn(&N, srp_n_hex_3072)) goto done;
++    g = BN_new();
++    x = BN_new();
++    k = BN_new();
++    tmp = BN_new();
++    if (!g || !x || !k || !tmp) goto done;
++    if (!BN_set_word(g, 5)) goto done;
++
++    /* salt + verifier for the fixed transient PIN */
++    if (RAND_bytes(pair->salt, sizeof(pair->salt)) != 1) goto done;
++    if (!hap_compute_x(pair->salt, sizeof(pair->salt), &x)) goto done;
++    if (!pair->v) pair->v = BN_new();
++    if (!pair->v || !BN_mod_exp(pair->v, g, x, N, ctx)) goto done;
++
++    /* k = H(PAD(N) || PAD(g)) */
++    if (!hap_hash_two_padded(N, g, digest)) goto done;
++    k = BN_bin2bn(digest, HAP_HASH_LEN, k);
++    if (!k) goto done;
++
++    /* B = (k*v + g^b) mod N */
++    if (!pair->b) pair->b = BN_new();
++    if (!pair->B) pair->B = BN_new();
++    if (!pair->b || !pair->B) goto done;
++    if (!BN_rand(pair->b, 256, BN_RAND_TOP_ONE, BN_RAND_BOTTOM_ANY)) goto done;
++    if (!BN_mod_exp(tmp, g, pair->b, N, ctx)) goto done;     /* g^b */
++    if (!BN_mod_mul(k, k, pair->v, N, ctx)) goto done;        /* k*v */
++    if (!BN_mod_add(pair->B, k, tmp, N, ctx)) goto done;      /* B */
++
++    bnum_len = BN_bn2bin(pair->B, bnum);
++    buf = (unsigned char *) calloc(1, 512);
++    if (!buf) goto done;
++    if (hap_tlv_put(buf, 512, &off, HAP_TLV_STATE, (const unsigned char *) "\x02", 1)) goto done;
++    if (hap_tlv_put(buf, 512, &off, HAP_TLV_SALT, pair->salt, (int) sizeof(pair->salt))) goto done;
++    if (hap_tlv_put(buf, 512, &off, HAP_TLV_PUBLIC_KEY, bnum, bnum_len)) goto done;
++    *out = buf;
++    *out_len = off;
++    buf = NULL;
++    rc = 0;
++done:
++    free(buf);
++    BN_free(N);
++    BN_free(g);
++    BN_free(x);
++    BN_free(k);
++    BN_free(tmp);
++    EVP_MD_CTX_free(md);
++    BN_CTX_free(ctx);
++    return rc;
++}
++
++/* M3: client sends A + proof M1 -> M4: server proof M2 */
++static int hap_handle_m3(hap_pair_t *pair, const unsigned char *in, int in_len,
++                     unsigned char **out, int *out_len)
++{
++    BN_CTX *ctx = BN_CTX_new();
++    EVP_MD_CTX *md = EVP_MD_CTX_new();
++    BIGNUM *N = NULL, *g = NULL, *A = NULL, *u = NULL, *S = NULL, *t1 = NULL, *t2 = NULL;
++    unsigned char digest[HAP_HASH_LEN], hash_n[HAP_HASH_LEN], hash_g[HAP_HASH_LEN];
++    unsigned char hash_user[HAP_HASH_LEN];
++    unsigned char expected[HAP_HASH_LEN], server_proof[HAP_HASH_LEN];
++    unsigned char abuf[HAP_N_BYTES], bbuf[HAP_N_BYTES];
++    unsigned char *buf = NULL;
++    const unsigned char *a_val, *proof;
++    int a_len = 0, proof_len = 0, off = 0, rc = -1;
++    int abuf_len, bbuf_len;
++    unsigned int md_len = 0;
++
++    if (!ctx || !md) goto done;
++    a_val = hap_tlv_get(in, in_len, HAP_TLV_PUBLIC_KEY, &a_len);
++    proof = hap_tlv_get(in, in_len, HAP_TLV_PROOF, &proof_len);
++    if (!a_val || a_len <= 0 || !proof || proof_len != HAP_HASH_LEN) goto done;
++    if (!pair->b || !pair->v || !pair->B) goto done;
++
++    if (!BN_hex2bn(&N, srp_n_hex_3072)) goto done;
++    g = BN_new();
++    A = BN_bin2bn(a_val, a_len, NULL);
++    u = BN_new();
++    S = BN_new();
++    t1 = BN_new();
++    t2 = BN_new();
++    if (!g || !A || !u || !S || !t1 || !t2) goto done;
++    if (!BN_set_word(g, 5)) goto done;
++
++    /* u = H(PAD(A) || PAD(B)) */
++    if (!hap_hash_two_padded(A, pair->B, digest)) goto done;
++    u = BN_bin2bn(digest, HAP_HASH_LEN, u);
++    if (!u || BN_is_zero(u)) goto done;
++
++    /* S = (A * v^u)^b mod N */
++    if (!BN_mod_exp(t1, pair->v, u, N, ctx)) goto done;       /* v^u */
++    if (!BN_mod_mul(t1, A, t1, N, ctx)) goto done;            /* A * v^u */
++    if (!BN_mod_exp(S, t1, pair->b, N, ctx)) goto done;
++
++    /* K = SHA512(S) with minimal-length big-endian S */
++    if (!hap_hash_bn(S, pair->secret)) goto done;
++
++    /* M1 = SHA512( H(N) xor H(g) || H(user) || salt || A || B || K ) */
++    if (!hap_hash_bn(N, hash_n) || !hap_hash_bn(g, hash_g)) goto done;
++    for (int i = 0; i < HAP_HASH_LEN; i++) digest[i] = hash_n[i] ^ hash_g[i];
++    if (!hap_sha512((const unsigned char *) HAP_USERNAME, (int) strlen(HAP_USERNAME), hash_user)) goto done;
++    abuf_len = BN_bn2bin(A, abuf);
++    bbuf_len = BN_bn2bin(pair->B, bbuf);
++
++    if (EVP_DigestInit_ex(md, EVP_sha512(), NULL) != 1 ||
++        EVP_DigestUpdate(md, digest, HAP_HASH_LEN) != 1 ||
++        EVP_DigestUpdate(md, hash_user, HAP_HASH_LEN) != 1 ||
++        EVP_DigestUpdate(md, pair->salt, sizeof(pair->salt)) != 1 ||
++        EVP_DigestUpdate(md, abuf, (size_t) abuf_len) != 1 ||
++        EVP_DigestUpdate(md, bbuf, (size_t) bbuf_len) != 1 ||
++        EVP_DigestUpdate(md, pair->secret, HAP_HASH_LEN) != 1 ||
++        EVP_DigestFinal_ex(md, expected, &md_len) != 1) goto done;
++
++    if (memcmp(expected, proof, HAP_HASH_LEN) != 0) {
++        /* wrong proof: report an authentication error to the client */
++        buf = (unsigned char *) calloc(1, 8);
++        if (!buf) goto done;
++        if (hap_tlv_put(buf, 8, &off, HAP_TLV_STATE, (const unsigned char *) "\x04", 1)) goto done;
++        if (hap_tlv_put(buf, 8, &off, HAP_TLV_ERROR, (const unsigned char *) "\x02", 1)) goto done;
++        *out = buf; *out_len = off; buf = NULL; rc = 0;
++        goto done;
++    }
++
++    /* M2 = SHA512(A || M1 || K) */
++    if (EVP_DigestInit_ex(md, EVP_sha512(), NULL) != 1 ||
++        EVP_DigestUpdate(md, abuf, (size_t) abuf_len) != 1 ||
++        EVP_DigestUpdate(md, proof, HAP_HASH_LEN) != 1 ||
++        EVP_DigestUpdate(md, pair->secret, HAP_HASH_LEN) != 1 ||
++        EVP_DigestFinal_ex(md, server_proof, &md_len) != 1) goto done;
++
++    buf = (unsigned char *) calloc(1, 128);
++    if (!buf) goto done;
++    if (hap_tlv_put(buf, 128, &off, HAP_TLV_STATE, (const unsigned char *) "\x04", 1)) goto done;
++    if (hap_tlv_put(buf, 128, &off, HAP_TLV_PROOF, server_proof, HAP_HASH_LEN)) goto done;
++    pair->done = 1;
++    *out = buf;
++    *out_len = off;
++    buf = NULL;
++    rc = 0;
++done:
++    free(buf);
++    BN_free(N); BN_free(g); BN_free(A); BN_free(u); BN_free(S); BN_free(t1); BN_free(t2);
++    EVP_MD_CTX_free(md);
++    BN_CTX_free(ctx);
++    return rc;
++}
++
++int hap_pair_setup(hap_pair_t *pair, const unsigned char *in, int in_len,
++                   unsigned char **out, int *out_len)
++{
++    const unsigned char *state;
++    int state_len = 0;
++
++    if (!pair || !in || in_len <= 0) return -1;
++    state = hap_tlv_get(in, in_len, HAP_TLV_STATE, &state_len);
++    if (!state || state_len != 1) return -1;
++
++    if (state[0] == 1) return hap_handle_m1(pair, out, out_len);
++    if (state[0] == 3) return hap_handle_m3(pair, in, in_len, out, out_len);
++    return -1;
++}
+diff --git a/lib/srp.h b/lib/srp.h
+index 6af96a7..e8a75be 100644
+--- a/lib/srp.h
++++ b/lib/srp.h
+@@ -233,4 +233,16 @@ void                  srp_user_process_challenge( struct SRPUser * usr,
+ void                  srp_user_verify_session( struct SRPUser * usr, const unsigned char * bytes_HAMK );
+ 
+ #endif  /*end removed section 4*/
++
++/* ---- AirPlay 2 HAP transient pair-setup ---- */
++typedef struct hap_pair_s hap_pair_t;
++#define HAP_SECRET_LEN 64
++
++hap_pair_t *hap_pair_create(void);
++void hap_pair_destroy(hap_pair_t *pair);
++int hap_pair_setup(hap_pair_t *pair, const unsigned char *in, int in_len,
++                   unsigned char **out, int *out_len);
++int hap_pair_get_secret(hap_pair_t *pair, unsigned char secret[HAP_SECRET_LEN]);
++int hap_pair_is_done(hap_pair_t *pair);
++
+ #endif /* Include Guard */
