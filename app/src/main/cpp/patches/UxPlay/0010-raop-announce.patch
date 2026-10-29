@@ -6421,7 +6421,7 @@ index 0000000..9f0e23e
 +
 +#endif  /* SODIUM_COMPAT_H */
 diff --git a/lib/raop.c b/lib/raop.c
-index 7098fae..adf4faa 100644
+index 07564e1..abcc68c 100644
 --- a/lib/raop.c
 +++ b/lib/raop.c
 @@ -22,6 +22,8 @@
@@ -6443,7 +6443,7 @@ index 7098fae..adf4faa 100644
      /* place to store media_data_store */
      airplay_video_t *airplay_video[MAX_AIRPLAY_VIDEO];
      int current_video;
-@@ -105,6 +110,9 @@ struct raop_conn_s {
+@@ -106,6 +111,9 @@ struct raop_conn_s {
      raop_rtp_mirror_t *raop_rtp_mirror;
      fairplay_t *fairplay;
      pairing_session_t *session;
@@ -6453,7 +6453,7 @@ index 7098fae..adf4faa 100644
    
      unsigned char *local;
      int locallen;
-@@ -119,6 +127,8 @@ struct raop_conn_s {
+@@ -120,6 +128,8 @@ struct raop_conn_s {
      char *client_session_id;
      bool authenticated;
      bool have_active_remote;
@@ -6462,7 +6462,7 @@ index 7098fae..adf4faa 100644
  };
  typedef struct raop_conn_s raop_conn_t;
  
-@@ -142,6 +152,7 @@ conn_init(void *opaque, unsigned char *local, int locallen, unsigned char *remot
+@@ -143,6 +153,7 @@ conn_init(void *opaque, unsigned char *local, int locallen, unsigned char *remot
      conn->raop_ntp = NULL;
      conn->fairplay = fairplay_init(raop->logger);
  
@@ -6470,7 +6470,7 @@ index 7098fae..adf4faa 100644
      if (!conn->fairplay) {
          free(conn);
          return NULL;
-@@ -149,6 +160,9 @@ conn_init(void *opaque, unsigned char *local, int locallen, unsigned char *remot
+@@ -150,6 +161,9 @@ conn_init(void *opaque, unsigned char *local, int locallen, unsigned char *remot
      conn->session = pairing_session_init(raop->pairing);
      if (!conn->session) {
          fairplay_destroy(conn->fairplay);
@@ -6480,7 +6480,7 @@ index 7098fae..adf4faa 100644
          free(conn);
          return NULL;
      }
-@@ -258,7 +272,12 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
+@@ -259,7 +273,12 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
      }
  
   /* this rejects messages from _airplay._tcp for video streaming protocol unless bool raop->hls_support is true*/   
@@ -6494,7 +6494,7 @@ index 7098fae..adf4faa 100644
          logger_log(raop->logger, LOGGER_INFO, "ignoring AirPlay video streaming request (use option -hls to activate HLS support)");
          return;
      }
-@@ -401,7 +420,9 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
+@@ -402,7 +421,9 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
  
      logger_log(raop->logger, LOGGER_DEBUG, "Handling request %s with URL %s", method, url);
      raop_handler_t handler = NULL;
@@ -6505,7 +6505,7 @@ index 7098fae..adf4faa 100644
          if (!strcmp(method, "POST")) {
              if (!strcmp(url, "/feedback")) {
                  handler = &raop_handler_feedback;
-@@ -424,6 +445,8 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
+@@ -425,6 +446,8 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
              }
          } else if (!strcmp(method, "OPTIONS")) {
              handler = &raop_handler_options;
@@ -6514,7 +6514,7 @@ index 7098fae..adf4faa 100644
          } else if (!strcmp(method, "SETUP")) {
              raop->hls_pending = false;
              handler = &raop_handler_setup;
-@@ -652,6 +675,9 @@ raop_init2(raop_t *raop, int nohold, const char *device_id, const char *keyfile)
+@@ -661,6 +684,9 @@ raop_init2(raop_t *raop, int nohold, const char *device_id, const char *keyfile)
  
      /* create a new public key for pairing */
      int new_key = 0;
@@ -6573,10 +6573,10 @@ index 45a3e4c..985f30f 100644
          char *str = utils_data_to_string(data,12,12);
          logger_log(raop_buffer->logger, LOGGER_INFO, "encrypted 12 byte header %s", str);
 diff --git a/lib/raop_handlers.h b/lib/raop_handlers.h
-index 5037e68..6bd4ba9 100644
+index b3f3b17..0e2c828 100644
 --- a/lib/raop_handlers.h
 +++ b/lib/raop_handlers.h
-@@ -436,6 +436,39 @@ raop_handler_pairsetup_pin(raop_conn_t *conn,
+@@ -439,6 +439,39 @@ raop_handler_pairsetup_pin(raop_conn_t *conn,
      http_response_init(response, "RTSP/1.0", 470, "Client Authentication Failure");
  }
  
@@ -6616,7 +6616,7 @@ index 5037e68..6bd4ba9 100644
  static void
  raop_handler_pairsetup(raop_conn_t *conn,
                         http_request_t *request, http_response_t *response,
-@@ -446,8 +479,39 @@ raop_handler_pairsetup(raop_conn_t *conn,
+@@ -449,8 +482,39 @@ raop_handler_pairsetup(raop_conn_t *conn,
      //const char *data;
      int datalen = 0;
  
@@ -6658,7 +6658,7 @@ index 5037e68..6bd4ba9 100644
      if (datalen != 32) {
          logger_log(raop->logger, LOGGER_ERR, "Invalid pair-setup data");
          return;
-@@ -470,7 +534,35 @@ raop_handler_pairverify(raop_conn_t *conn,
+@@ -473,7 +537,35 @@ raop_handler_pairverify(raop_conn_t *conn,
                          char **response_data, int *response_datalen)
  {
      raop_t *raop = conn->raop;
@@ -6693,9 +6693,9 @@ index 5037e68..6bd4ba9 100644
 +        }
 +    }
      if (pairing_session_check_handshake_status(conn->session)) {
-         if (raop->use_pin) {
-             pairing_session_set_setup_status(conn->session);
-@@ -590,7 +682,56 @@ raop_handler_options(raop_conn_t *conn,
+         pairing_session_set_setup_status(conn->session);
+         register_check = raop->use_pin;
+@@ -589,7 +681,56 @@ raop_handler_options(raop_conn_t *conn,
                       http_request_t *request, http_response_t *response,
                       char **response_data, int *response_datalen)
  {
@@ -6753,7 +6753,7 @@ index 5037e68..6bd4ba9 100644
  }
  
  static void
-@@ -618,6 +759,91 @@ raop_handler_setup(raop_conn_t *conn,
+@@ -617,6 +758,91 @@ raop_handler_setup(raop_conn_t *conn,
          }
      }
  
