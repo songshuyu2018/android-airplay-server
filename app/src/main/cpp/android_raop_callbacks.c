@@ -63,6 +63,8 @@ void android_callbacks_init(android_callback_ctx_t *ctx, JNIEnv *env, jobject ca
     ctx->on_coverart = (*env)->GetMethodID(env, cls, "onCoverArt", "([B)V");
     ctx->on_progress = (*env)->GetMethodID(env, cls, "onProgress", "(JJJ)V");
     ctx->on_dacp_id = (*env)->GetMethodID(env, cls, "onDacpId", "(Ljava/lang/String;Ljava/lang/String;)V");
+    ctx->on_audio_flush = (*env)->GetMethodID(env, cls, "onAudioFlush", "()V");
+    ctx->on_audio_resume = (*env)->GetMethodID(env, cls, "onAudioResume", "()V");
     ctx->on_mirror_running = (*env)->GetMethodID(env, cls, "onMirrorRunning", "(Z)V");
     ctx->on_video_play = (*env)->GetMethodID(env, cls, "onVideoPlay", "(Ljava/lang/String;F)V");
     ctx->on_video_scrub = (*env)->GetMethodID(env, cls, "onVideoScrub", "(F)V");
@@ -105,6 +107,13 @@ void android_callbacks_update_playback_info(android_callback_ctx_t *ctx, double 
 static void _audio_process(void *cls, raop_ntp_t *ntp, audio_decode_struct *data) {
     android_callback_ctx_t *ctx = (android_callback_ctx_t *)cls;
     if (!ctx->audio_engine || !data->data || data->data_len <= 0) return;
+    /* audio resumed after a flush: the sender is still playing (seek/next rather than
+     * a pause), so tell the host to cancel its pending pause transition */
+    if (__atomic_exchange_n(&ctx->audio_resume_pending, 0, __ATOMIC_RELAXED)) {
+        JNIEnv *env = _get_env(ctx);
+        if (env && ctx->callback_obj && ctx->on_audio_resume)
+            (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_audio_resume);
+    }
     audio_engine_decode(ctx->audio_engine, data->data, data->data_len,
                         (int)data->ct, (int64_t)data->ntp_time_local);
 }
@@ -218,7 +227,17 @@ static void _video_reset(void *cls, reset_type_t t) {
         raop_remove_hls_connections(ctx->raop);
     }
 }
-static void _audio_flush(void *cls) { LOGI("audio_flush"); }
+static void _audio_flush(void *cls) {
+    android_callback_ctx_t *ctx = (android_callback_ctx_t *)cls;
+    LOGI("audio_flush");
+    if (!ctx || !ctx->callback_obj) return;
+    /* RAOP senders (Music Assistant, iTunes) signal pause by flushing and then simply
+     * not sending anything, so the host needs to see the flush to stop its clock. */
+    __atomic_store_n(&ctx->audio_resume_pending, 1, __ATOMIC_RELAXED);
+    JNIEnv *env = _get_env(ctx);
+    if (env && ctx->on_audio_flush)
+        (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_audio_flush);
+}
 
 static void _audio_stop_coverart_rendering(void *cls) {
     android_callback_ctx_t *ctx = (android_callback_ctx_t *)cls;
