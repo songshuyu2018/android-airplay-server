@@ -860,6 +860,21 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         _refreshDacpPlayer()
     }
 
+    // RAOP senders (Music Assistant, iTunes) announce a pause by flushing and then
+    // going silent, without telling us the playback state. A seek/next also flushes but
+    // is followed immediately by audio, so pausing is deferred until silence persists.
+    private val audioPauseAfterFlush = Runnable { _setPlaying(false) }
+
+    override fun onAudioFlush() {
+        _mainHandler.removeCallbacks(audioPauseAfterFlush)
+        _mainHandler.postDelayed(audioPauseAfterFlush, 400)
+    }
+
+    override fun onAudioResume() {
+        _mainHandler.removeCallbacks(audioPauseAfterFlush)
+        if (!_playing.value) _setPlaying(true)
+    }
+
     override fun onProgress(start: Long, curr: Long, end: Long) {
         val rate = 44100.0
         val posMs = ((curr - start) / rate * 1000).toLong().coerceAtLeast(0)
