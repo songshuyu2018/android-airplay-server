@@ -102,6 +102,8 @@ tasks.register("applyUxplayPatches") {
         val patches = file("src/main/cpp/patches/UxPlay").listFiles { f -> f.extension == "patch" }!!.sorted()
         val touched = patches.flatMap { git("apply", "--numstat", it.path).trim().lines() }
             .map { it.substringAfterLast("\t") }.distinct()
+            // a patch may also add files; those cannot (and need not) be checked out
+            .filter { java.io.File("$projectDir/src/main/cpp/third_party/UxPlay", it).exists() }
         git("checkout", "--", *touched.toTypedArray())
         patches.forEach { git("apply", "--unidiff-zero", it.path) }
     }
