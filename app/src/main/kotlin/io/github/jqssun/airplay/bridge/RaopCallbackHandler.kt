@@ -9,6 +9,10 @@ interface RaopCallbackHandler {
     // /info initialVolume
     fun onClientVolumeQuery(): Float
     fun onAudioTeardown()
+    // sender flushed the audio stream: playback stopped, or a seek/next is coming
+    fun onAudioFlush()
+    // audio arrived again after a flush (seek/next/resume)
+    fun onAudioResume()
     fun onConnectionInit()
     fun onConnectionDestroy()
     fun onConnectionReset(reason: Int)
