@@ -114,6 +114,8 @@ static void _audio_process(void *cls, raop_ntp_t *ntp, audio_decode_struct *data
         if (env && ctx->callback_obj && ctx->on_audio_resume)
             (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_audio_resume);
     }
+    __atomic_store_n(&ctx->last_rtp_time, (uint32_t)data->rtp_time, __ATOMIC_RELAXED);
+    __atomic_store_n(&ctx->last_rtp_pts_ns, (uint64_t)data->ntp_time_local, __ATOMIC_RELAXED);
     audio_engine_decode(ctx->audio_engine, data->data, data->data_len,
                         (int)data->ct, (int64_t)data->ntp_time_local);
 }
