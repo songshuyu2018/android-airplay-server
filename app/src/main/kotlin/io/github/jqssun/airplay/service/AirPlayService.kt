@@ -160,11 +160,18 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
 
     @Volatile private var _progressBaseMs = 0L
     @Volatile private var _progressBaseTime = 0L
+    /** last "implausible" position the sender reported, pending confirmation */
+    @Volatile private var _pendingSeekMs = -1L
 
     fun currentPositionMs(): Long {
         if (_progressBaseTime == 0L || !_playing.value) return _positionMs.value
         val elapsed = SystemClock.elapsedRealtime() - _progressBaseTime
-        return (_progressBaseMs + elapsed).coerceIn(0, _durationMs.value)
+        val pos = _progressBaseMs + elapsed
+        // The sender does not always tell us a duration (a track started mid-way
+        // reports end == start). Clamping to a zero duration would pin the shown
+        // position to 0:00, so only clamp when a duration is actually known.
+        val dur = _durationMs.value
+        return if (dur > 0) pos.coerceIn(0, dur) else pos.coerceAtLeast(0)
     }
 
     var dacpController: DacpController? = null
@@ -879,15 +886,33 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         val rate = 44100.0
         val posMs = ((curr - start) / rate * 1000).toLong().coerceAtLeast(0)
         val durMs = ((end - start) / rate * 1000).toLong().coerceAtLeast(0)
-        // pause/resume transitions emit degenerate progress; keep the last good value
-        if (durMs <= 0) return
-        // A sender that is pausing (RAOP senders such as Music Assistant flush and then
-        // go quiet) also sends a progress with curr == start. Taking it would rewind the
-        // shown position to 0 while playback is actually parked at the pause point, and
-        // resuming would then count from zero. Only accept a rewind to zero when the
-        // track actually changed (its duration differs).
+        // The sender does not always know a duration (a track started mid-way sends
+        // end == start), so keep whatever duration we already have in that case.
+        if (durMs > 0 && kotlin.math.abs(durMs - _durationMs.value) > 1000L) {
+            _durationMs.value = durMs
+        }
+        // While parked after a pause the sender keeps emitting progress against the
+        // timeline it restarted (typically a jump to ~1 s). Taking it would move the
+        // position away from the pause point, so keep the frozen value until we are
+        // playing again.
+        if (!_playing.value) return
+
+        // Degenerate progress: a rewind to zero on the same track would restart the
+        // displayed time from 0:00.
         val sameTrack = _durationMs.value > 0 && durMs == _durationMs.value
         if (sameTrack && posMs == 0L && _positionMs.value > 2000L) return
+
+        // Large jumps are usually the sender's stream-relative bookkeeping rather than a
+        // seek; accept one only after a second update confirms it.
+        val shown = currentPositionMs()
+        if (sameTrack && _positionMs.value > 5000L && kotlin.math.abs(posMs - shown) > 5000L) {
+            if (_pendingSeekMs < 0L || kotlin.math.abs(posMs - _pendingSeekMs) > 2000L) {
+                _pendingSeekMs = posMs
+                return
+            }
+        }
+        _pendingSeekMs = -1L
+
         _positionMs.value = posMs
         _durationMs.value = durMs
         _progressBaseMs = posMs
