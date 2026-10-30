@@ -891,6 +891,18 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     private val audioPauseAfterFlush = Runnable { _setPlaying(false) }
 
     override fun onAudioFlush() {
+        // Freeze the position where the audio really stopped. After a FLUSH the sender
+        // restarts its timeline and its next progress line reports a small elapsed
+        // value (about one second), so the last rendered frame is the only truthful
+        // source for the pause point.
+        if (_playing.value && _trackStartRtp >= 0 && nativeHandle != 0L) {
+            val audible = NativeBridge.nativeGetAudiblePositionMs(nativeHandle, _trackStartRtp)
+            if (audible > 0) {
+                _positionMs.value = audible
+                _progressBaseMs = audible
+                _progressBaseTime = 0L
+            }
+        }
         _mainHandler.removeCallbacks(audioPauseAfterFlush)
         _mainHandler.postDelayed(audioPauseAfterFlush, 400)
     }
