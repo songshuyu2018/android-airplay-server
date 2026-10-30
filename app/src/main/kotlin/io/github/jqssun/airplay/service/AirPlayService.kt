@@ -881,6 +881,13 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         val durMs = ((end - start) / rate * 1000).toLong().coerceAtLeast(0)
         // pause/resume transitions emit degenerate progress; keep the last good value
         if (durMs <= 0) return
+        // A sender that is pausing (RAOP senders such as Music Assistant flush and then
+        // go quiet) also sends a progress with curr == start. Taking it would rewind the
+        // shown position to 0 while playback is actually parked at the pause point, and
+        // resuming would then count from zero. Only accept a rewind to zero when the
+        // track actually changed (its duration differs).
+        val sameTrack = _durationMs.value > 0 && durMs == _durationMs.value
+        if (sameTrack && posMs == 0L && _positionMs.value > 2000L) return
         _positionMs.value = posMs
         _durationMs.value = durMs
         _progressBaseMs = posMs
