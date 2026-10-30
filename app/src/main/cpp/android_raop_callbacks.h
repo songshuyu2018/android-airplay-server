@@ -54,6 +54,11 @@ typedef struct {
     pthread_cond_t play_ready_cond;
     int play_ready;
     AudioEngine *audio_engine;
+    /* Most recently decoded audio frame: its RTP timestamp and the local time it is
+     * scheduled to be rendered. Used to report the position actually being heard
+     * instead of the sender's "already sent" position. */
+    volatile uint32_t last_rtp_time;
+    volatile uint64_t last_rtp_pts_ns;
 } android_callback_ctx_t;
 
 void android_callbacks_init(android_callback_ctx_t *ctx, JNIEnv *env, jobject callback_obj);
