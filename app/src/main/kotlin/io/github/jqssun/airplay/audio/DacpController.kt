@@ -91,6 +91,9 @@ class DacpController(ctx: Context) {
                     val conn = URL(url).openConnection() as HttpURLConnection
                     conn.requestMethod = "GET"
                     conn.setRequestProperty("Active-Remote", activeRemote)
+                    // Apple's DACP identifies the session by BOTH headers; a request
+                    // carrying only Active-Remote is ignored by most senders.
+                    if (dacpId.isNotEmpty()) conn.setRequestProperty("DACP-ID", dacpId)
                     conn.setRequestProperty("Host", "$host:$port")
                     conn.connectTimeout = 2000
                     conn.readTimeout = 2000
