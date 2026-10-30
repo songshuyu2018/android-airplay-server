@@ -14,6 +14,7 @@ extern "C" {
 #include "logger.h"
 #include "pairing.h"
 #include "android_raop_callbacks.h"
+#include "raop_ntp.h"
 #include "android_dnssd_shim.h"
 }
 
@@ -44,6 +45,30 @@ static void _log_callback(void *cls, int level, const char *msg) {
 
 extern "C"
 JNIEXPORT jlong JNICALL
+Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeGetAudiblePositionMs(
+        JNIEnv *env, jobject thiz, jlong handle, jlong trackStartRtp) {
+
+    server_ctx_t *ctx = (server_ctx_t *)(intptr_t)handle;
+    if (!ctx || trackStartRtp < 0) return -1;
+
+    uint32_t last_rtp = __atomic_load_n(&ctx->cb_ctx.last_rtp_time, __ATOMIC_RELAXED);
+    uint64_t last_pts = __atomic_load_n(&ctx->cb_ctx.last_rtp_pts_ns, __ATOMIC_RELAXED);
+    if (last_rtp == 0 || last_pts == 0) return -1;
+
+    /* `last_pts` is when the newest decoded frame will be rendered; whatever is
+     * audible right now is that many frames earlier. Expressing the position in the
+     * stream's own timeline makes it track what the listener hears instead of what
+     * the sender has already pushed out (which leads by the stream lead time). */
+    uint64_t now = raop_ntp_get_local_time();
+    double ahead_frames = ((double) ((int64_t) last_pts - (int64_t) now)) / 1e9 * 44100.0;
+    uint32_t delta = last_rtp - (uint32_t) trackStartRtp;   /* wraps correctly */
+    double pos_ms = ((double) delta - ahead_frames) * 1000.0 / 44100.0;
+    if (pos_ms < 0) return 0;
+    return (jlong) pos_ms;
+}
+
+extern "C"
+JNIEXPORT jlong JNICALL
 Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeInit(
         JNIEnv *env, jobject thiz,
         jobject callback, jbyteArray hwAddr, jstring name, jstring keyFile,
@@ -68,7 +93,7 @@ Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeInit(
     }
     ctx->cb_ctx.raop = ctx->raop;
 
-    raop_set_log_level(ctx->raop, LOGGER_INFO);  /* patched: verbose for RAOP diagnostics */
+    raop_set_log_level(ctx->raop, LOGGER_ERR);
     raop_set_log_callback(ctx->raop, _log_callback, NULL);
 
     const char *keyfile_c = env->GetStringUTFChars(keyFile, NULL);
