@@ -17,6 +17,10 @@ object NativeBridge {
         requirePin: Boolean
     ): Long
 
+    /** position (ms) of the audio actually being rendered, or -1 when unknown;
+     *  trackStartRtp is the `start` field of the sender's progress line */
+    external fun nativeGetAudiblePositionMs(handle: Long, trackStartRtp: Long): Long
+
     external fun nativeStart(handle: Long, port: Int): Int
     external fun nativeStop(handle: Long)
     external fun nativeDestroy(handle: Long)
