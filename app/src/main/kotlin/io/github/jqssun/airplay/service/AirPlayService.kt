@@ -65,6 +65,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 data class VideoPlaybackInfo(
@@ -160,10 +161,19 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
 
     @Volatile private var _progressBaseMs = 0L
     @Volatile private var _progressBaseTime = 0L
+    /** RTP timestamp where the current track starts, from the sender's progress line */
+    @Volatile private var _trackStartRtp = -1L
     /** last "implausible" position the sender reported, pending confirmation */
     @Volatile private var _pendingSeekMs = -1L
 
     fun currentPositionMs(): Long {
+        // Prefer the position of the audio actually being rendered: the sender's
+        // progress leads what is heard by its stream lead time, so it drifts from
+        // both the MA UI and the user's perception.
+        if (_playing.value && _trackStartRtp >= 0 && nativeHandle != 0L) {
+            val audible = NativeBridge.nativeGetAudiblePositionMs(nativeHandle, _trackStartRtp)
+            if (audible >= 0) return audible
+        }
         if (_progressBaseTime == 0L || !_playing.value) return _positionMs.value
         val elapsed = SystemClock.elapsedRealtime() - _progressBaseTime
         val pos = _progressBaseMs + elapsed
@@ -332,6 +342,13 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
                     skipSilence = snapshot.skipSilence,
                     buffering = snapshot.buffering,
                 )
+            }
+        }
+        // keep the shown position moving between the sender's (infrequent) progress lines
+        lifecycleScope.launch {
+            while (true) {
+                delay(500)
+                if (_playing.value) _positionMs.value = currentPositionMs()
             }
         }
         lifecycleScope.launch {
@@ -854,6 +871,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         val info = TrackInfo.fromDmap(map, _trackInfo.value.coverArt)
         _trackInfo.value = info
         if (info.durationMs > 0) _durationMs.value = info.durationMs
+        _trackStartRtp = -1L   // new track: wait for its progress line before using the clock
         _updateMediaMetadata()
         _refreshDacpPlayer()
         log("Track: ${info.artist} - ${info.title}")
@@ -886,6 +904,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         val rate = 44100.0
         val posMs = ((curr - start) / rate * 1000).toLong().coerceAtLeast(0)
         val durMs = ((end - start) / rate * 1000).toLong().coerceAtLeast(0)
+        if (start > 0) _trackStartRtp = start
         // The sender does not always know a duration (a track started mid-way sends
         // end == start), so keep whatever duration we already have in that case.
         if (durMs > 0 && kotlin.math.abs(durMs - _durationMs.value) > 1000L) {
