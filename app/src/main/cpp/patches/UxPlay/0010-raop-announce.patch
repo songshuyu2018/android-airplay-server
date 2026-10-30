@@ -20,6 +20,199 @@ index 9040c51..8beae60 100644
  set(DIR_SRCS ${play_src})
  
  add_library( airplay  STATIC
+diff --git a/lib/dnssdint.h b/lib/dnssdint.h
+index b1478ea..5c38bf5 100644
+--- a/lib/dnssdint.h
++++ b/lib/dnssdint.h
+@@ -31,7 +31,11 @@
+ #define RAOP_VV "2"
+ #define FEATURES_1 "0x5A7FFEE6" /* first 32 bits of features, with bit 27 ("supports legacy pairing") ON */
+ //#define FEATURES_1 "0x527FFEE6" /* first 32 bits of features, with bit 27 ("supports legacy pairing") OFF */
+-#define FEATURES_2  "0x0"        /* second 32 bits of features */
++/* second 32 bits of features: bit 38 (SupportsUnifiedMediaControl) and bit 48
++ * (SupportsCoreUtilsPairingAndEncryption) mark the device as AirPlay 2 capable,
++ * which is what makes AirPlay 2 senders (iOS 13+, Music Assistant) pick the HAP
++ * pairing + encrypted-RTSP path instead of falling back to RAOP. */
++#define FEATURES_2  "0x10040"
+ #define RAOP_RHD "5.6.0.0"
+ #define RAOP_SF "0x4"
+ #define RAOP_SV "false"
+diff --git a/lib/httpd.c b/lib/httpd.c
+index 56a3742..3e0e677 100644
+--- a/lib/httpd.c
++++ b/lib/httpd.c
+@@ -23,6 +23,7 @@
+ #include <errno.h>
+ 
+ #include "httpd.h"
++#include "pair_ap/pair.h"
+ #include "netutils.h"
+ #include "http_request.h"
+ #include "compat.h"
+@@ -44,6 +45,14 @@ struct http_connection_s {
+     connection_type_t type;
+     http_request_t *request;
+     int pending_remove;
++    /* AirPlay 2 (HAP): after pairing the peer frames the RTSP channel as
++     * [uint16 length][ciphertext][16-byte tag], so input is decrypted here and
++     * output encrypted before it goes on the wire. */
++    struct pair_cipher_context *cipher;
++    struct pair_cipher_context *cipher_pending;  /* takes effect after this response */
++    uint8_t *rx;          /* accumulated ciphertext not yet forming a whole block */
++    size_t rx_len;
++    size_t rx_cap;
+ };
+ typedef struct http_connection_s http_connection_t;
+ 
+@@ -85,6 +94,20 @@ httpd_get_connection_socket (httpd_t *httpd, void *user_data) {
+     return -1;
+ }
+ 
++void
++httpd_set_connection_cipher(httpd_t *httpd, void *user_data, void *cipher)
++{
++    int i;
++    for (i = 0; i < httpd->max_connections; i++) {
++        http_connection_t *connection = &httpd->connections[i];
++        if (connection->connected && connection->user_data == user_data) {
++            /* the reply that completed pairing must still go out in the clear, so
++             * the cipher only takes effect on the next request */
++            connection->cipher_pending = (struct pair_cipher_context *) cipher;
++        }
++    }
++}
++
+ int
+ httpd_set_connection_type (httpd_t *httpd, void *user_data, connection_type_t type) {
+     for (int i = 0; i < httpd->max_connections; i++) {
+@@ -356,6 +379,48 @@ httpd_remove_connections_by_type(httpd_t *httpd, connection_type_t type) {
+     }
+ }
+ 
++/* ---------- AirPlay 2 (HAP) channel encryption ---------- */
++
++/* Append ciphertext to the connection's pending buffer. */
++static int
++connection_rx_append(http_connection_t *connection, const uint8_t *data, size_t len)
++{
++    if (connection->rx_len + len > connection->rx_cap) {
++        size_t cap = connection->rx_cap ? connection->rx_cap * 2 : 8192;
++        while (cap < connection->rx_len + len) cap *= 2;
++        uint8_t *n = realloc(connection->rx, cap);
++        if (!n) return -1;
++        connection->rx = n;
++        connection->rx_cap = cap;
++    }
++    memcpy(connection->rx + connection->rx_len, data, len);
++    connection->rx_len += len;
++    return 0;
++}
++
++/* Decrypt whatever complete blocks the pending buffer holds. Returns a malloc'd
++ * plaintext buffer (NULL when nothing complete yet) and how much was consumed. */
++static uint8_t *
++connection_rx_decrypt(http_connection_t *connection, size_t *plain_len_out, size_t *consumed_out)
++{
++    uint8_t *plain = NULL;
++    size_t plain_len = 0;
++    ssize_t consumed;
++
++    *plain_len_out = 0;
++    *consumed_out = 0;
++    if (!connection->cipher || connection->rx_len == 0) return NULL;
++
++    consumed = pair_decrypt(&plain, &plain_len, connection->rx, connection->rx_len, connection->cipher);
++    if (consumed <= 0) {
++        if (consumed < 0) return NULL;   /* incomplete block: wait for more bytes */
++        return NULL;
++    }
++    *plain_len_out = plain_len;
++    *consumed_out = (size_t) consumed;
++    return plain;
++}
++
+ static THREAD_RETVAL
+ httpd_thread(void *arg)
+ {
+@@ -555,6 +620,36 @@ httpd_thread(void *arg)
+                 continue;
+             }
+ 
++            if (connection->cipher_pending) {
++                connection->cipher = connection->cipher_pending;
++                connection->cipher_pending = NULL;
++            }
++
++            if (connection->cipher && recv_datalen > 0) {
++                /* AirPlay 2: the peer encrypts the RTSP channel once pairing is
++                 * done, so accumulate and decrypt whole blocks before parsing. */
++                size_t plain_len = 0, consumed = 0;
++                uint8_t *plain = NULL;
++                if (connection_rx_append(connection, (const uint8_t *) buffer, (size_t) recv_datalen) < 0) {
++                    httpd_remove_connection(httpd, connection, 0);
++                    continue;
++                }
++                plain = connection_rx_decrypt(connection, &plain_len, &consumed);
++                if (consumed > 0) {
++                    memmove(connection->rx, connection->rx + consumed, connection->rx_len - consumed);
++                    connection->rx_len -= consumed;
++                }
++                if (!plain || plain_len == 0) {
++                    free(plain);
++                    continue;              /* need more bytes for a whole block */
++                }
++                if (plain_len > sizeof(buffer) - 1) plain_len = sizeof(buffer) - 1;
++                memcpy(buffer, plain, plain_len);
++                buffer[plain_len] = '\0';
++                free(plain);
++                recv_datalen = (int) plain_len;
++            }
++
+             /* Parse HTTP request from data read from connection */
+             http_request_add_data(connection->request, buffer, recv_datalen);
+             if (http_request_has_error(connection->request)) {
+@@ -593,6 +688,20 @@ httpd_thread(void *arg)
+                     /* Get response data and datalen */
+                     data = http_response_get_data(response, &datalen);
+ 
++                    uint8_t *enc = NULL;
++                    size_t enc_len = 0;
++                    if (connection->cipher && datalen > 0) {
++                        if (pair_encrypt(&enc, &enc_len, (const uint8_t *) data, (size_t) datalen,
++                                         connection->cipher) < 0) {
++                            logger_log(httpd->logger, LOGGER_ERR,
++                                       "httpd: encrypting the response failed: %s",
++                                       pair_cipher_errmsg(connection->cipher));
++                            break;
++                        }
++                        data = (const char *) enc;
++                        datalen = (int) enc_len;
++                    }
++
+                     written = 0;
+                     while (written < datalen) {
+                         ret = send(connection->socket_fd, data+written, datalen-written, 0);
+@@ -602,6 +711,7 @@ httpd_thread(void *arg)
+                         }
+                         written += ret;
+                     }
++                    free(enc);
+ 
+                     if (http_response_get_disconnect(response)) {
+                         logger_log(httpd->logger, LOGGER_INFO, "Disconnecting on software request");
+diff --git a/lib/httpd.h b/lib/httpd.h
+index 72cc137..4c0593b 100644
+--- a/lib/httpd.h
++++ b/lib/httpd.h
+@@ -41,6 +41,8 @@ bool httpd_nohold(httpd_t *httpd);
+ void httpd_remove_known_connections(httpd_t *httpd);
+ void httpd_remove_connections_by_type(httpd_t *httpd, connection_type_t type);
+ 
++/* AirPlay 2 (HAP): encrypt the RTSP channel of this connection from now on */
++void httpd_set_connection_cipher(httpd_t *httpd, void *user_data, void *cipher);
+ int httpd_set_connection_type (httpd_t *http, void *user_data, connection_type_t type);
+ int httpd_count_connection_type (httpd_t *http, connection_type_t type);
+ int httpd_get_connection_socket (httpd_t *httpd, void *user_data);
 diff --git a/lib/pair_ap/pair-internal.h b/lib/pair_ap/pair-internal.h
 new file mode 100644
 index 0000000..488e2db
@@ -6421,7 +6614,7 @@ index 0000000..9f0e23e
 +
 +#endif  /* SODIUM_COMPAT_H */
 diff --git a/lib/raop.c b/lib/raop.c
-index 07564e1..abcc68c 100644
+index 07564e1..66bdb9d 100644
 --- a/lib/raop.c
 +++ b/lib/raop.c
 @@ -22,6 +22,8 @@
@@ -6443,17 +6636,19 @@ index 07564e1..abcc68c 100644
      /* place to store media_data_store */
      airplay_video_t *airplay_video[MAX_AIRPLAY_VIDEO];
      int current_video;
-@@ -106,6 +111,9 @@ struct raop_conn_s {
+@@ -106,6 +111,11 @@ struct raop_conn_s {
      raop_rtp_mirror_t *raop_rtp_mirror;
      fairplay_t *fairplay;
      pairing_session_t *session;
 +    struct pair_setup_context *pair_setup;    /* HAP pair-setup (AirPlay 2) */
 +    struct pair_verify_context *pair_verify;  /* HAP pair-verify */
 +    struct pair_cipher_context *pair_cipher;  /* encrypted RTSP framing */
++    int ap2_audio;                            /* HAP session: ChaCha20 audio */
++    unsigned char ap2_audio_key[32];          /* = pairing secret[0..31] */
    
      unsigned char *local;
      int locallen;
-@@ -120,6 +128,8 @@ struct raop_conn_s {
+@@ -120,6 +130,8 @@ struct raop_conn_s {
      char *client_session_id;
      bool authenticated;
      bool have_active_remote;
@@ -6462,7 +6657,7 @@ index 07564e1..abcc68c 100644
  };
  typedef struct raop_conn_s raop_conn_t;
  
-@@ -143,6 +153,7 @@ conn_init(void *opaque, unsigned char *local, int locallen, unsigned char *remot
+@@ -143,6 +155,7 @@ conn_init(void *opaque, unsigned char *local, int locallen, unsigned char *remot
      conn->raop_ntp = NULL;
      conn->fairplay = fairplay_init(raop->logger);
  
@@ -6470,7 +6665,7 @@ index 07564e1..abcc68c 100644
      if (!conn->fairplay) {
          free(conn);
          return NULL;
-@@ -150,6 +161,9 @@ conn_init(void *opaque, unsigned char *local, int locallen, unsigned char *remot
+@@ -150,6 +163,9 @@ conn_init(void *opaque, unsigned char *local, int locallen, unsigned char *remot
      conn->session = pairing_session_init(raop->pairing);
      if (!conn->session) {
          fairplay_destroy(conn->fairplay);
@@ -6480,7 +6675,7 @@ index 07564e1..abcc68c 100644
          free(conn);
          return NULL;
      }
-@@ -259,7 +273,12 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
+@@ -259,7 +275,12 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
      }
  
   /* this rejects messages from _airplay._tcp for video streaming protocol unless bool raop->hls_support is true*/   
@@ -6494,7 +6689,7 @@ index 07564e1..abcc68c 100644
          logger_log(raop->logger, LOGGER_INFO, "ignoring AirPlay video streaming request (use option -hls to activate HLS support)");
          return;
      }
-@@ -402,7 +421,9 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
+@@ -402,7 +423,9 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
  
      logger_log(raop->logger, LOGGER_DEBUG, "Handling request %s with URL %s", method, url);
      raop_handler_t handler = NULL;
@@ -6505,7 +6700,7 @@ index 07564e1..abcc68c 100644
          if (!strcmp(method, "POST")) {
              if (!strcmp(url, "/feedback")) {
                  handler = &raop_handler_feedback;
-@@ -425,6 +446,8 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
+@@ -425,6 +448,8 @@ conn_request(void *ptr, http_request_t *request, http_response_t **response) {
              }
          } else if (!strcmp(method, "OPTIONS")) {
              handler = &raop_handler_options;
@@ -6514,7 +6709,7 @@ index 07564e1..abcc68c 100644
          } else if (!strcmp(method, "SETUP")) {
              raop->hls_pending = false;
              handler = &raop_handler_setup;
-@@ -661,6 +684,9 @@ raop_init2(raop_t *raop, int nohold, const char *device_id, const char *keyfile)
+@@ -661,6 +686,9 @@ raop_init2(raop_t *raop, int nohold, const char *device_id, const char *keyfile)
  
      /* create a new public key for pairing */
      int new_key = 0;
@@ -6524,11 +6719,55 @@ index 07564e1..abcc68c 100644
      pairing = pairing_init_generate(device_id, keyfile, &new_key);
      if (!pairing) {
          logger_log(raop->logger, LOGGER_ERR, "failed to create new public key for pairing");
+@@ -701,6 +729,13 @@ raop_init2(raop_t *raop, int nohold, const char *device_id, const char *keyfile)
+     raop->httpd = httpd;
+     return 0;
+ }
++/* Hand the connection's HAP cipher to its httpd connection (AirPlay 2). */
++void
++raop_set_connection_cipher(raop_t *raop, void *conn, void *cipher) {
++    if (!raop || !raop->httpd) return;
++    httpd_set_connection_cipher(raop->httpd, conn, cipher);
++}
++
+ 
+ void
+ raop_destroy(raop_t *raop) {
+diff --git a/lib/raop.h b/lib/raop.h
+index ac7b69c..177b5b2 100644
+--- a/lib/raop.h
++++ b/lib/raop.h
+@@ -136,6 +136,7 @@ RAOP_API void raop_set_tcp_ports(raop_t *raop, unsigned short port[2]);
+ RAOP_API unsigned short raop_get_port(raop_t *raop);
+ RAOP_API void *raop_get_callback_cls(raop_t *raop);
+ RAOP_API int raop_start_httpd(raop_t *raop, unsigned short *port);
++RAOP_API void raop_set_connection_cipher(raop_t *raop, void *conn, void *cipher);
+ RAOP_API int raop_is_running(raop_t *raop);
+ RAOP_API void raop_stop_httpd(raop_t *raop);
+ RAOP_API void raop_set_dnssd(raop_t *raop, dnssd_t *dnssd);
 diff --git a/lib/raop_buffer.c b/lib/raop_buffer.c
-index 45a3e4c..985f30f 100644
+index 45a3e4c..6713e64 100644
 --- a/lib/raop_buffer.c
 +++ b/lib/raop_buffer.c
-@@ -69,15 +69,16 @@ raop_buffer_init(logger_t *logger,
+@@ -24,6 +24,7 @@
+ #include <stdint.h>
+ 
+ #include "raop_buffer.h"
++#include <openssl/evp.h>
+ #include "raop_rtp.h"
+ 
+ #include "crypto.h"
+@@ -54,6 +55,9 @@ struct raop_buffer_s {
+     logger_t *logger;
+     /* AES CTX used for decryption */
+     aes_ctx_t *aes_ctx;
++    /* AirPlay 2 (HAP): audio is ChaCha20-Poly1305 with the pairing shared secret */
++    int ap2_mode;
++    unsigned char ap2_key[32];
+ 
+     /* First and last seqnum */
+     int is_empty;
+@@ -69,15 +73,16 @@ raop_buffer_init(logger_t *logger,
                   const unsigned char *aeskey,
                   const unsigned char *aesiv)
  {
@@ -6548,7 +6787,7 @@ index 45a3e4c..985f30f 100644
  
      for (int i = 0; i < RAOP_BUFFER_LENGTH; i++) {
          raop_buffer_entry_t *entry = &raop_buffer->entries[i];
-@@ -101,7 +102,9 @@ raop_buffer_destroy(raop_buffer_t *raop_buffer)
+@@ -101,7 +106,9 @@ raop_buffer_destroy(raop_buffer_t *raop_buffer)
      }
  
      if (raop_buffer) {
@@ -6559,10 +6798,74 @@ index 45a3e4c..985f30f 100644
          free(raop_buffer);
      }
  
-@@ -117,6 +120,12 @@ int
+@@ -113,10 +120,76 @@ seqnum_cmp(unsigned short s1, unsigned short s2)
+     return (s1 - s2);
+ }
+ 
++void
++raop_buffer_set_ap2_key(raop_buffer_t *raop_buffer, const unsigned char key[32])
++{
++    assert(raop_buffer);
++    memcpy(raop_buffer->ap2_key, key, 32);
++    raop_buffer->ap2_mode = 1;
++}
++
++/* AirPlay 2 realtime audio packet:
++ *   [12-byte RTP header][ciphertext][16-byte tag][8-byte nonce tail]
++ * key = first 32 bytes of the pairing shared secret, nonce = 4 zero bytes ||
++ * the trailing 8 bytes, and the RTP timestamp+SSRC are the associated data. */
++static int
++raop_buffer_decrypt_ap2(raop_buffer_t *raop_buffer, unsigned char *data,
++                        unsigned char *output, unsigned int payload_size,
++                        unsigned int *outputlen)
++{
++    unsigned char nonce[12] = { 0 };
++    EVP_CIPHER_CTX *ctx = NULL;
++    int len = 0, outl = 0, ok = -1;
++    unsigned int total = payload_size + 12 + 16 + 8;
++
++    if (payload_size <= 16) return -1;
++    memcpy(nonce + 4, &data[total - 8], 8);
++
++    ctx = EVP_CIPHER_CTX_new();
++    if (!ctx) return -1;
++    if (EVP_DecryptInit_ex(ctx, EVP_chacha20_poly1305(), NULL, NULL, NULL) != 1) goto done;
++    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_IVLEN, 12, NULL) != 1) goto done;
++    if (EVP_DecryptInit_ex(ctx, NULL, NULL, raop_buffer->ap2_key, nonce) != 1) goto done;
++    if (EVP_DecryptUpdate(ctx, NULL, &len, &data[4], 8) != 1) goto done;   /* AAD: ts + ssrc */
++    if (EVP_DecryptUpdate(ctx, output, &outl, &data[12], (int) payload_size) != 1) goto done;
++    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, 16, &data[12 + payload_size]) != 1) goto done;
++    if (EVP_DecryptFinal_ex(ctx, output + outl, &len) <= 0) goto done;
++
++    *outputlen = (unsigned int) (outl + len);
++    ok = 1;
++    {
++        static int logged_ok = 0, logged_err = 0;
++        if (!logged_ok++) {
++            logger_log(raop_buffer->logger, LOGGER_INFO,
++                       "AP2 audio: first packet decrypted (%u bytes, seq=%u)",
++                       *outputlen, byteutils_get_short_be(data, 2));
++        }
++    }
++done:
++    EVP_CIPHER_CTX_free(ctx);
++    if (ok < 0) {
++        static int logged_err = 0;
++        if (logged_err++ < 3) {
++            logger_log(raop_buffer->logger, LOGGER_ERR,
++                       "AP2 audio: ChaCha20-Poly1305 decryption failed (len=%u)", payload_size);
++        }
++    }
++    return ok;
++}
++
+ int
  raop_buffer_decrypt(raop_buffer_t *raop_buffer, unsigned char *data, unsigned char* output, unsigned int payload_size, unsigned int *outputlen)
  {
      assert(raop_buffer);
++    if (raop_buffer->ap2_mode) {
++        return raop_buffer_decrypt_ap2(raop_buffer, data, output, payload_size, outputlen);
++    }
 +    if (!raop_buffer->aes_ctx) {
 +        /* unencrypted stream: skip the 12 byte RTP header and copy the payload */
 +        memcpy(output, &data[12], payload_size);
@@ -6572,11 +6875,37 @@ index 45a3e4c..985f30f 100644
      if (DECRYPTION_TEST) {
          char *str = utils_data_to_string(data,12,12);
          logger_log(raop_buffer->logger, LOGGER_INFO, "encrypted 12 byte header %s", str);
+@@ -177,6 +250,11 @@ raop_buffer_enqueue(raop_buffer_t *raop_buffer, unsigned char *data, unsigned sh
+         return 0;
+     }
+     int payload_size = datalen - 12;
++    if (raop_buffer->ap2_mode) {
++        /* ciphertext excludes the 16-byte tag and the 8-byte nonce tail */
++        if (datalen < 12 + 16 + 8 + 1) return 0;
++        payload_size = datalen - 12 - 16 - 8;
++    }
+ 
+     /* Get correct seqnum for the packet */
+     unsigned short seqnum = 0;
+diff --git a/lib/raop_buffer.h b/lib/raop_buffer.h
+index a3322da..812ee04 100644
+--- a/lib/raop_buffer.h
++++ b/lib/raop_buffer.h
+@@ -25,6 +25,9 @@ typedef struct raop_buffer_s raop_buffer_t;
+ 
+ typedef int (*raop_resend_cb_t)(void *opaque, unsigned short seqno, unsigned short count);
+ 
++/* AirPlay 2 (HAP) audio: ChaCha20-Poly1305 with the pairing shared secret */
++void raop_buffer_set_ap2_key(raop_buffer_t *raop_buffer, const unsigned char key[32]);
++
+ raop_buffer_t *raop_buffer_init(logger_t *logger,
+                                 const unsigned char *aeskey,
+                                 const unsigned char *aesiv);
 diff --git a/lib/raop_handlers.h b/lib/raop_handlers.h
-index b3f3b17..0e2c828 100644
+index b3f3b17..a653cf8 100644
 --- a/lib/raop_handlers.h
 +++ b/lib/raop_handlers.h
-@@ -439,6 +439,39 @@ raop_handler_pairsetup_pin(raop_conn_t *conn,
+@@ -439,6 +439,46 @@ raop_handler_pairsetup_pin(raop_conn_t *conn,
      http_response_init(response, "RTSP/1.0", 470, "Client Authentication Failure");
  }
  
@@ -6605,6 +6934,13 @@ index b3f3b17..0e2c828 100644
 +    conn->pair_cipher = pair_cipher_new(PAIR_SERVER_HOMEKIT, PAIR_CHANNEL_CONTROL,
 +                                       result->shared_secret, result->shared_secret_len, NULL);
 +    if (conn->pair_cipher) {
++        /* from the next request on, the RTSP channel is HAP-framed */
++        raop_set_connection_cipher(raop, conn, conn->pair_cipher);
++        /* audio key = first 32 bytes of the pairing shared secret */
++        if (result->shared_secret_len >= 32) {
++            memcpy(conn->ap2_audio_key, result->shared_secret, 32);
++            conn->ap2_audio = 1;
++        }
 +        logger_log(raop->logger, LOGGER_INFO, "HAP: session key installed (%zu bytes)",
 +                   result->shared_secret_len);
 +    } else {
@@ -6616,7 +6952,7 @@ index b3f3b17..0e2c828 100644
  static void
  raop_handler_pairsetup(raop_conn_t *conn,
                         http_request_t *request, http_response_t *response,
-@@ -449,8 +482,39 @@ raop_handler_pairsetup(raop_conn_t *conn,
+@@ -449,8 +489,39 @@ raop_handler_pairsetup(raop_conn_t *conn,
      //const char *data;
      int datalen = 0;
  
@@ -6658,7 +6994,7 @@ index b3f3b17..0e2c828 100644
      if (datalen != 32) {
          logger_log(raop->logger, LOGGER_ERR, "Invalid pair-setup data");
          return;
-@@ -473,7 +537,35 @@ raop_handler_pairverify(raop_conn_t *conn,
+@@ -473,7 +544,35 @@ raop_handler_pairverify(raop_conn_t *conn,
                          char **response_data, int *response_datalen)
  {
      raop_t *raop = conn->raop;
@@ -6695,7 +7031,7 @@ index b3f3b17..0e2c828 100644
      if (pairing_session_check_handshake_status(conn->session)) {
          pairing_session_set_setup_status(conn->session);
          register_check = raop->use_pin;
-@@ -589,7 +681,56 @@ raop_handler_options(raop_conn_t *conn,
+@@ -589,7 +688,56 @@ raop_handler_options(raop_conn_t *conn,
                       http_request_t *request, http_response_t *response,
                       char **response_data, int *response_datalen)
  {
@@ -6753,7 +7089,7 @@ index b3f3b17..0e2c828 100644
  }
  
  static void
-@@ -617,6 +758,91 @@ raop_handler_setup(raop_conn_t *conn,
+@@ -617,6 +765,91 @@ raop_handler_setup(raop_conn_t *conn,
          }
      }
  
@@ -6845,6 +7181,83 @@ index b3f3b17..0e2c828 100644
      // Parsing bplist
      plist_t req_root_node = NULL;
      plist_from_bin(data, data_len, &req_root_node);
+@@ -626,7 +859,12 @@ raop_handler_setup(raop_conn_t *conn,
+     // For the response
+     plist_t res_root_node = plist_new_dict();
+ 
+-    if (PLIST_IS_DATA(req_eiv_node) && PLIST_IS_DATA(req_ekey_node)) {
++    /* Two flavours of AirPlay 2 SETUP land here:
++     *  - legacy FairPlay: the plist carries ekey/eiv (AES-CBC audio)
++     *  - HAP (this is what iOS 13+ and Music Assistant use): no ekey/eiv, audio is
++     *    ChaCha20-Poly1305 keyed by the pairing shared secret */
++    bool has_fairplay_keys = PLIST_IS_DATA(req_eiv_node) && PLIST_IS_DATA(req_ekey_node);
++    if (has_fairplay_keys || (conn->ap2_audio && !conn->raop_rtp)) {
+         // The first SETUP call that initializes keys and timing
+ 
+         unsigned char aesiv[16] = { 0 };
+@@ -778,9 +1016,11 @@ raop_handler_setup(raop_conn_t *conn,
+             return;
+         }
+ 
+-        plist_get_data_val(req_eiv_node, &eiv, &eiv_len);
+-        memcpy(aesiv, eiv, 16);
+-        free(eiv);	
++        if (has_fairplay_keys) {
++            plist_get_data_val(req_eiv_node, &eiv, &eiv_len);
++            memcpy(aesiv, eiv, 16);
++            free(eiv);
++        }	
+         logger_log(raop->logger, LOGGER_DEBUG, "eiv_len = %llu", eiv_len);
+         if (logger_debug) {
+             char* str = utils_data_to_string(aesiv, 16, 16);
+@@ -790,9 +1030,11 @@ raop_handler_setup(raop_conn_t *conn,
+ 
+         char* ekey = NULL;
+         uint64_t ekey_len = 0;
+-        plist_get_data_val(req_ekey_node, &ekey, &ekey_len);
+-        memcpy(eaeskey,ekey,72);
+-        free(ekey);
++        if (has_fairplay_keys) {
++            plist_get_data_val(req_ekey_node, &ekey, &ekey_len);
++            memcpy(eaeskey,ekey,72);
++            free(ekey);
++        }
+         logger_log(raop->logger, LOGGER_DEBUG, "ekey_len = %llu", ekey_len);
+         // eaeskey is 72 bytes, aeskey is 16 bytes
+         if (logger_debug) {
+@@ -800,7 +1042,8 @@ raop_handler_setup(raop_conn_t *conn,
+             logger_log(raop->logger, LOGGER_DEBUG, "ekey:\n%s", str);
+             free (str);
+         }
+-        int ret = fairplay_decrypt(conn->fairplay, (unsigned char*) eaeskey, aeskey);
++        int ret = has_fairplay_keys ?
++                  fairplay_decrypt(conn->fairplay, (unsigned char*) eaeskey, aeskey) : 0;
+         logger_log(raop->logger, LOGGER_DEBUG, "fairplay_decrypt ret = %d", ret);
+         if (logger_debug) {
+             char *str = utils_data_to_string(aeskey, 16, 16);
+@@ -916,11 +1159,21 @@ raop_handler_setup(raop_conn_t *conn,
+                        conn->remotelen, conn->zone_id, str, remote);
+             free(str);
+         }
++        /* Senders timestamp with plain Unix seconds in both their RAOP and AirPlay 2
++         * sync packets, so no 1900-epoch correction must be applied here. */
++        if (conn->ap2_audio) time_protocol = TP_NONE;
+         conn->raop_ntp = raop_ntp_init(raop->logger, &raop->callbacks, remote,
+                                        conn->remotelen, (unsigned short) timing_rport, &time_protocol);
+         raop_ntp_start(conn->raop_ntp, &timing_lport);
+         conn->raop_rtp = raop_rtp_init(raop->logger, &raop->callbacks, conn->raop_ntp,
+-                                       remote, conn->remotelen, aeskey, aesiv);
++                                       remote, conn->remotelen,
++                                       has_fairplay_keys ? aeskey : NULL,
++                                       has_fairplay_keys ? aesiv : NULL);
++        if (conn->raop_rtp && !has_fairplay_keys && conn->ap2_audio) {
++            /* HAP session: audio is ChaCha20-Poly1305 with the pairing secret */
++            raop_rtp_set_ap2_key(conn->raop_rtp, conn->ap2_audio_key);
++            logger_log(raop->logger, LOGGER_INFO, "SETUP: AirPlay 2 (HAP) audio, ChaCha20 keyed");
++        }
+         conn->raop_rtp_mirror = raop_rtp_mirror_init(raop->logger, &raop->callbacks,
+                                                      conn->raop_ntp, remote, conn->remotelen, aeskey);
+ 
 diff --git a/lib/raop_ntp.c b/lib/raop_ntp.c
 index 7da009d..75d5944 100644
 --- a/lib/raop_ntp.c
@@ -6960,6 +7373,51 @@ index 7da009d..75d5944 100644
          pthread_cond_timedwait(&raop_ntp->wait_cond, &raop_ntp->wait_mutex, &wait_time);
          MUTEX_UNLOCK(raop_ntp->wait_mutex);
      }
+diff --git a/lib/raop_rtp.c b/lib/raop_rtp.c
+index 64eb7fb..c263e8a 100644
+--- a/lib/raop_rtp.c
++++ b/lib/raop_rtp.c
+@@ -662,6 +662,12 @@ raop_rtp_start_audio(raop_rtp_t *raop_rtp,  unsigned short *control_rport, unsig
+ 
+     MUTEX_LOCK(raop_rtp->run_mutex);
+     if (raop_rtp->running || !raop_rtp->joined) {
++        /* Already streaming (AirPlay 2 starts it from the first SETUP, then the
++         * stream SETUP asks again): still report the allocated ports, otherwise
++         * the caller advertises the default ones and the sender streams into
++         * the void. */
++        *control_lport = raop_rtp->control_lport;
++        *data_lport = raop_rtp->data_lport;
+         MUTEX_UNLOCK(raop_rtp->run_mutex);
+         return;
+     }
+@@ -692,6 +698,14 @@ raop_rtp_start_audio(raop_rtp_t *raop_rtp,  unsigned short *control_rport, unsig
+     MUTEX_UNLOCK(raop_rtp->run_mutex);
+ }
+ 
++/* AirPlay 2 (HAP): switch the audio buffer to ChaCha20-Poly1305 decryption. */
++void
++raop_rtp_set_ap2_key(raop_rtp_t *raop_rtp, const unsigned char key[32])
++{
++    assert(raop_rtp);
++    if (raop_rtp->buffer) raop_buffer_set_ap2_key(raop_rtp->buffer, key);
++}
++
+ void
+ raop_rtp_set_volume(raop_rtp_t *raop_rtp, float volume)
+ {
+diff --git a/lib/raop_rtp.h b/lib/raop_rtp.h
+index d9f5476..fce9998 100644
+--- a/lib/raop_rtp.h
++++ b/lib/raop_rtp.h
+@@ -35,6 +35,8 @@ raop_rtp_t *raop_rtp_init(logger_t *logger, raop_callbacks_t *callbacks, raop_nt
+ void raop_rtp_start_audio(raop_rtp_t *raop_rtp, unsigned short *control_rport, unsigned short *control_lport,
+                           unsigned short *data_lport, unsigned char *ct, unsigned int *sr);
+ 
++void raop_rtp_set_ap2_key(raop_rtp_t *raop_rtp, const unsigned char key[32]);
++
+ void raop_rtp_set_volume(raop_rtp_t *raop_rtp, float volume);
+ void raop_rtp_set_metadata(raop_rtp_t *raop_rtp, const char *data, int datalen);
+ void raop_rtp_set_coverart(raop_rtp_t *raop_rtp, const char *data, int datalen);
 diff --git a/lib/srp.c b/lib/srp.c
 index 7fd752c..0d889a6 100644
 --- a/lib/srp.c
