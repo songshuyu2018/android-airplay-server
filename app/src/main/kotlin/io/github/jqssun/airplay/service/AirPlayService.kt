@@ -163,6 +163,9 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     @Volatile private var _progressBaseTime = 0L
     /** RTP timestamp where the current track starts, from the sender's progress line */
     @Volatile private var _trackStartRtp = -1L
+    /** when the sender last flushed; audio already in the pipe keeps arriving for the
+     *  stream lead time afterwards and must not be mistaken for a resume */
+    @Volatile private var _lastFlushAt = 0L
     /** last "implausible" position the sender reported, pending confirmation */
     @Volatile private var _pendingSeekMs = -1L
 
@@ -891,6 +894,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     private val audioPauseAfterFlush = Runnable { _setPlaying(false) }
 
     override fun onAudioFlush() {
+        _lastFlushAt = SystemClock.elapsedRealtime()
         // Freeze the position where the audio really stopped. After a FLUSH the sender
         // restarts its timeline and its next progress line reports a small elapsed
         // value (about one second), so the last rendered frame is the only truthful
@@ -908,6 +912,11 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     }
 
     override fun onAudioResume() {
+        // A FLUSH is followed by roughly one stream-lead of already-buffered audio, so
+        // packets arriving right after it do not mean the sender resumed: only audio
+        // that keeps coming past the lead window counts as a resume (a seek behaves
+        // that way, a pause does not).
+        if (SystemClock.elapsedRealtime() - _lastFlushAt < 2500L) return
         _mainHandler.removeCallbacks(audioPauseAfterFlush)
         if (!_playing.value) _setPlaying(true)
     }
