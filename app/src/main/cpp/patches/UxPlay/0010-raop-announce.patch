@@ -21,22 +21,24 @@ index 9040c51..8beae60 100644
  
  add_library( airplay  STATIC
 diff --git a/lib/dnssdint.h b/lib/dnssdint.h
-index b1478ea..5c38bf5 100644
+index b1478ea..287fbae 100644
 --- a/lib/dnssdint.h
 +++ b/lib/dnssdint.h
-@@ -31,7 +31,11 @@
+@@ -31,6 +31,14 @@
  #define RAOP_VV "2"
  #define FEATURES_1 "0x5A7FFEE6" /* first 32 bits of features, with bit 27 ("supports legacy pairing") ON */
  //#define FEATURES_1 "0x527FFEE6" /* first 32 bits of features, with bit 27 ("supports legacy pairing") OFF */
--#define FEATURES_2  "0x0"        /* second 32 bits of features */
-+/* second 32 bits of features: bit 38 (SupportsUnifiedMediaControl) and bit 48
-+ * (SupportsCoreUtilsPairingAndEncryption) mark the device as AirPlay 2 capable,
-+ * which is what makes AirPlay 2 senders (iOS 13+, Music Assistant) pick the HAP
-+ * pairing + encrypted-RTSP path instead of falling back to RAOP. */
-+#define FEATURES_2  "0x10040"
++/* second 32 bits of features.
++ *
++ * Deliberately 0: advertising bit 38 (SupportsUnifiedMediaControl) or bit 48
++ * (SupportsCoreUtilsPairingAndEncryption) makes iOS/other AirPlay 2 senders
++ * abandon the established legacy-pairing + FairPlay path in favour of HAP,
++ * which changes the behaviour of the working iOS flow. The HAP implementation
++ * (pair_ap + encrypted RTSP + ChaCha20 audio) stays behind this switch so it
++ * can be enabled deliberately. */
+ #define FEATURES_2  "0x0"        /* second 32 bits of features */
  #define RAOP_RHD "5.6.0.0"
  #define RAOP_SF "0x4"
- #define RAOP_SV "false"
 diff --git a/lib/httpd.c b/lib/httpd.c
 index 56a3742..3e0e677 100644
 --- a/lib/httpd.c
