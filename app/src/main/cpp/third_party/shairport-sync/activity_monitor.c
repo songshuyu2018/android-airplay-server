@@ -251,8 +251,14 @@ void activity_monitor_stop() {
       going_inactive(config.cmd_blocking);
       state = am_inactive;
     }
+#ifdef __ANDROID__
+    /* bionic does not implement pthread_cancel: let the polling thread finish
+     * on its own instead of joining a thread we cannot cancel. */
+    pthread_detach(activity_monitor_thread);
+#else
     pthread_cancel(activity_monitor_thread);
     pthread_join(activity_monitor_thread, NULL);
+#endif
     debug(2, "activity_monitor_stop complete");
   }
 }
