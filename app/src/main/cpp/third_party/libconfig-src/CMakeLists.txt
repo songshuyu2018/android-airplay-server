@@ -6,8 +6,10 @@ project(libconfig_min C)
 add_library(config STATIC
     lib/libconfig.c
     lib/scanner.c
+    lib/scanctx.c
     lib/grammar.c
     lib/strbuf.c
+    lib/strvec.c
     lib/util.c)
 target_include_directories(config PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/lib
