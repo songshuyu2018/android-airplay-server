@@ -53,11 +53,11 @@ ExternalProject_Add(ffmpeg_ep
         --sysroot=${CMAKE_SYSROOT}
         --enable-pic --disable-asm --disable-x86asm
         --disable-all --disable-debug --disable-network --disable-autodetect
-        --enable-avcodec --enable-decoder=alac,aac --enable-static --disable-shared
+        --enable-avcodec --enable-avformat --enable-swresample --enable-decoder=alac,aac --enable-static --disable-shared
         ${_ffmpeg_sanitize}
     BUILD_COMMAND make -j${_ffmpeg_jobs}
     INSTALL_COMMAND make install
-    BUILD_BYPRODUCTS ${FFMPEG_INSTALL}/lib/libavcodec.a ${FFMPEG_INSTALL}/lib/libavutil.a
+    BUILD_BYPRODUCTS ${FFMPEG_INSTALL}/lib/libavcodec.a ${FFMPEG_INSTALL}/lib/libavutil.a ${FFMPEG_INSTALL}/lib/libavformat.a ${FFMPEG_INSTALL}/lib/libswresample.a
     LOG_CONFIGURE TRUE
     LOG_BUILD TRUE
     LOG_INSTALL TRUE
@@ -76,3 +76,14 @@ set_target_properties(ffmpeg::avcodec PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES ${FFMPEG_INSTALL}/include
     INTERFACE_LINK_LIBRARIES ffmpeg::avutil
 )
+
+add_library(ffmpeg::avformat STATIC IMPORTED)
+set_target_properties(ffmpeg::avformat PROPERTIES
+    IMPORTED_LOCATION ${FFMPEG_INSTALL}/lib/libavformat.a
+    INTERFACE_INCLUDE_DIRECTORIES ${FFMPEG_INSTALL}/include
+    INTERFACE_LINK_LIBRARIES "ffmpeg::avcodec;ffmpeg::avutil")
+add_library(ffmpeg::swresample STATIC IMPORTED)
+set_target_properties(ffmpeg::swresample PROPERTIES
+    IMPORTED_LOCATION ${FFMPEG_INSTALL}/lib/libswresample.a
+    INTERFACE_INCLUDE_DIRECTORIES ${FFMPEG_INSTALL}/include
+    INTERFACE_LINK_LIBRARIES "ffmpeg::avutil")
