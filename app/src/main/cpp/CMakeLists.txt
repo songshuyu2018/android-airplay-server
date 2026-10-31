@@ -118,7 +118,10 @@ set(AIRPLAY_SOURCES
     ${UXPLAY_LIB}/pair_ap/pair-tlv.c
     ${UXPLAY_LIB}/pair_ap/pair_homekit.c
     ${UXPLAY_LIB}/pair_ap/pair_fruit.c
-    ${UXPLAY_LIB}/pair_ap/sodium_compat.c
+    # sodium_compat.c is UxPlay's OpenSSL-backed stand-in for libsodium. shairport-sync
+    # needs the real libsodium, and both define sodium_init() and the crypto_sign_* /
+    # crypto_scalarmult_* family, so the stand-in is left out and pair_ap's symbols
+    # resolve against libsodium.
 )
 
 # ---------- Android JNI bridge + dnssd shim ----------
