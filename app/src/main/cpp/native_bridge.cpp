@@ -443,3 +443,9 @@ Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeServerAudioDebug(
     if (!addr || cap <= 0) return JNI_FALSE;
     return audio_engine_get_debug(ctx->cb_ctx.audio_engine, addr, (size_t)cap) ? JNI_TRUE : JNI_FALSE;
 }
+
+extern "C" int airplay_android_audio_write(void *buf, int samples, int bytes_per_frame,
+                                           uint32_t timestamp, uint64_t playtime) {
+    (void) buf; (void) timestamp; (void) playtime;
+    return samples * bytes_per_frame;
+}

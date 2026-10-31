@@ -18,7 +18,11 @@ set(OPENSSL_PARAMS "-D__ANDROID_API__=${AIRPLAY_ANDROID_API}" CACHE STRING "" FO
 set(FORWARD_ANDROID_NDK_ROOT "${ANDROID_NDK}" CACHE STRING "" FORCE) # CI
 
 list(PREPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/openssl-cmake)
+add_subdirectory(third_party/libconfig-src)
+add_subdirectory(third_party/popt-src)
+add_subdirectory(third_party/shairport-sync)
 
 # ---------- Sanitizers (opt-in via -DSANITIZE=ON) ----------
 # OpenSSL uninstrumented; HWASan is arm64-only
@@ -153,6 +157,7 @@ target_compile_definitions(airplay_native PRIVATE
 target_link_options(airplay_native PRIVATE "-Wl,--build-id=none")
 
 target_link_libraries(airplay_native
+    shairport_sync
     llhttp
     playfair
     crypto
