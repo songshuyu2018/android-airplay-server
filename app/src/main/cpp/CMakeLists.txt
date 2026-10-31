@@ -133,7 +133,7 @@ set(BRIDGE_SOURCES
 add_subdirectory(third_party/libconfig-src)
 add_subdirectory(third_party/popt-src)
 add_subdirectory(third_party/shairport-sync)
-target_link_libraries(shairport_sync PUBLIC ffmpeg::avcodec ffmpeg::avformat ffmpeg::avutil plist)
+target_link_libraries(shairport_sync PUBLIC ffmpeg::avcodec ffmpeg::avutil plist)
 
 add_library(airplay_native SHARED
     ${AIRPLAY_SOURCES}
