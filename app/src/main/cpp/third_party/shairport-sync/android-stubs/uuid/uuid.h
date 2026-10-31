@@ -43,6 +43,13 @@ static inline void uuid_generate_sha1(uuid_t out, const uuid_t ns,
   out[8] = (unsigned char) ((out[8] & 0x3F) | 0x80);   /* variant */
 }
 
+static inline void uuid_generate_random(uuid_t out) {
+  /* not security relevant here: only used to mint a per-session identifier */
+  for (int i = 0; i < 16; i++) out[i] = (unsigned char) (rand() & 0xFF);
+  out[6] = (unsigned char) ((out[6] & 0x0F) | 0x40);   /* version 4 */
+  out[8] = (unsigned char) ((out[8] & 0x3F) | 0x80);   /* variant */
+}
+
 static inline void uuid_unparse_lower(const uuid_t uu, char *out) {
   snprintf(out, 37,
            "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
