@@ -5,7 +5,8 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <openssl/sha.h>
+#include <openssl/evp.h>
+#include <stdlib.h>
 
 typedef unsigned char uuid_t[16];
 
@@ -29,12 +30,14 @@ static inline int uuid_parse(const char *in, uuid_t uu) {
 
 static inline void uuid_generate_sha1(uuid_t out, const uuid_t ns,
                                       const void *name, size_t len) {
-  SHA_CTX ctx;
-  unsigned char digest[SHA_DIGEST_LENGTH];
-  SHA1_Init(&ctx);
-  SHA1_Update(&ctx, ns, 16);
-  SHA1_Update(&ctx, name, len);
-  SHA1_Final(digest, &ctx);
+  unsigned char *buf = (unsigned char *) malloc(16 + len);
+  unsigned int dlen = 0;
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  if (!buf) { memset(out, 0, 16); return; }
+  memcpy(buf, ns, 16);
+  memcpy(buf + 16, name, len);
+  EVP_Digest(buf, 16 + len, digest, &dlen, EVP_sha1(), NULL);
+  free(buf);
   memcpy(out, digest, 16);
   out[6] = (unsigned char) ((out[6] & 0x0F) | 0x50);   /* version 5 */
   out[8] = (unsigned char) ((out[8] & 0x3F) | 0x80);   /* variant */
