@@ -67,6 +67,16 @@ extern int main(int argc, char **argv);
 #define SPS_AUDIO_BACKEND "android"
 #endif
 
+/* AirPlay 2 needs PTP timing, which comes from NQPTP over a POSIX shared-memory
+ * segment -- neither of which exists on Android yet (M6).  Asking for classic
+ * AirPlay makes that explicit: without it shairport-sync would try to detect NQPTP
+ * at startup and, depending on what it finds, advertise an AirPlay 2 service whose
+ * audio it cannot time.  iOS and Music Assistant both play classic AirPlay audio,
+ * and it needs no coordination between devices. */
+#ifndef SPS_SERVICE_TYPE
+#define SPS_SERVICE_TYPE "classic"
+#endif
+
 static pthread_mutex_t state_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static volatile unsigned run_number;    // incremented by every start
@@ -152,6 +162,8 @@ static void *_sps_thread(void *arg) {
   argv[argc++] = "-a";
   argv[argc++] = service_name;
   argv[argc++] = "--output=" SPS_AUDIO_BACKEND;
+  argv[argc++] = "--service-type";
+  argv[argc++] = SPS_SERVICE_TYPE;
   argv[argc++] = "--port";
   argv[argc++] = port_text;
   if (metadata_pipe[0] != '\0') {
