@@ -18,6 +18,7 @@ target_include_directories(shairport_sync PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/utilities
     ${CMAKE_CURRENT_SOURCE_DIR}/metadata
     ${CMAKE_CURRENT_SOURCE_DIR}/pair_ap
+    ${CMAKE_CURRENT_SOURCE_DIR}/android-stubs
     ${CMAKE_CURRENT_SOURCE_DIR}/../libplist/include)
 
 # shairport-sync relies on these being force-included (autotools passes
