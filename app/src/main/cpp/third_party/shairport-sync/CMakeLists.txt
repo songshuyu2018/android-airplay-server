@@ -8,7 +8,8 @@ file(GLOB_RECURSE SPS_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.c
 # audio backends we do not use
 list(REMOVE_ITEM SPS_SOURCES
      "${CMAKE_CURRENT_SOURCE_DIR}/audio_stdout.c"
-     "${CMAKE_CURRENT_SOURCE_DIR}/audio_pipe.c")
+     "${CMAKE_CURRENT_SOURCE_DIR}/audio_pipe.c"
+     "${CMAKE_CURRENT_SOURCE_DIR}/dacp.c")   # needs libtinyhttp; DACP client is off
 
 add_library(shairport_sync STATIC ${SPS_SOURCES})
 
