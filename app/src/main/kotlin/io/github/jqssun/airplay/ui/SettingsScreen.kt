@@ -71,6 +71,8 @@ fun SettingsScreen(viewModel: MainViewModel) {
     val operatingRate by viewModel.pref(Prefs.OPERATING_RATE).collectAsState()
     val scheduledOutputBufferRelease by viewModel.pref(Prefs.SCHEDULED_OUTPUT_BUFFER_RELEASE).collectAsState()
     val benchmarkLog by viewModel.pref(Prefs.BENCHMARK_LOG).collectAsState()
+    val useShairport by viewModel.pref(Prefs.USE_SHAIRPORT).collectAsState()
+    val shairportVerbosity by viewModel.pref(Prefs.SHAIRPORT_VERBOSITY).collectAsState()
     val audioAutoBuffer by viewModel.pref(Prefs.AUDIO_AUTO_BUFFER).collectAsState()
     val audioCushionMs by viewModel.pref(Prefs.AUDIO_CUSHION_MS).collectAsState()
     val audioAdaptiveStep by viewModel.pref(Prefs.AUDIO_ADAPTIVE_STEP).collectAsState()
@@ -438,6 +440,21 @@ fun SettingsScreen(viewModel: MainViewModel) {
                 description = stringResource(R.string.setting_benchmark_log_desc),
                 checked = benchmarkLog,
                 onCheckedChange = { viewModel.set(Prefs.BENCHMARK_LOG, it) }
+            )
+
+            SettingSwitch(
+                title = stringResource(R.string.setting_use_shairport),
+                description = stringResource(R.string.setting_use_shairport_desc),
+                checked = useShairport,
+                onCheckedChange = { viewModel.set(Prefs.USE_SHAIRPORT, it) }
+            )
+
+            SettingTextField(
+                label = stringResource(R.string.setting_shairport_verbosity),
+                value = shairportVerbosity.toString(),
+                onCommit = { viewModel.set(Prefs.SHAIRPORT_VERBOSITY, it.toInt()) },
+                description = stringResource(R.string.setting_shairport_verbosity_desc),
+                range = Prefs.SHAIRPORT_VERBOSITY.range
             )
         }
     }

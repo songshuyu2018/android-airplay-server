@@ -20,6 +20,12 @@ extern "C" {
 
 #include "audio_engine.h"
 #include "log_sink.h"
+#include "pcm_sink.h"
+#include "sps_metadata.h"
+
+extern "C" {
+#include "android_start.h"
+}
 
 #define TAG "AirPlayNative"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -444,8 +450,131 @@ Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeServerAudioDebug(
     return audio_engine_get_debug(ctx->cb_ctx.audio_engine, addr, (size_t)cap) ? JNI_TRUE : JNI_FALSE;
 }
 
+/* =====================================================================
+ * shairport-sync receiver
+ *
+ * Unlike the RAOP path above there is one receiver per process and no handle
+ * to pass around: shairport-sync keeps its state in globals, so a singleton is
+ * the honest representation.  Its decoded PCM goes to pcm_sink and its metadata
+ * pipe to sps_metadata.
+ * ===================================================================== */
+
+typedef struct {
+    android_callback_ctx_t cb;  /* only the JNI plumbing is used: no raop, no engine */
+    PcmSink *sink;
+} sps_ctx_t;
+
+static sps_ctx_t *g_sps = NULL;
+
+static void _sps_exit_reported(int status) {
+    LOGI("shairport-sync reported exit %d", status);
+}
+
+/* --- audio backend hooks (called from shairport's player thread) --- */
+
+extern "C" int airplay_android_audio_config(unsigned int rate, unsigned int channels,
+                                            unsigned int bytes_per_sample) {
+    if (!g_sps || !g_sps->sink) return -1;
+    return pcm_sink_start(g_sps->sink, (int) rate, (int) channels, (int) bytes_per_sample);
+}
+
 extern "C" int airplay_android_audio_write(void *buf, int samples, int bytes_per_frame,
                                            uint32_t timestamp, uint64_t playtime) {
-    (void) buf; (void) timestamp; (void) playtime;
-    return samples * bytes_per_frame;
+    (void) timestamp;
+    (void) playtime;
+    /* shairport-sync paces itself: play() is "queue this now", and the sink answers
+     * with how much it could take.  Nothing here may block for long. */
+    if (!g_sps || !g_sps->sink) return samples * bytes_per_frame;
+    int accepted = pcm_sink_write(g_sps->sink, buf, samples);
+    return accepted * bytes_per_frame;
 }
+
+extern "C" void airplay_android_audio_stop(void) {
+    if (g_sps && g_sps->sink) pcm_sink_stop(g_sps->sink);
+}
+
+extern "C" void airplay_android_audio_flush(void) {
+    if (g_sps && g_sps->sink) pcm_sink_flush(g_sps->sink);
+}
+
+extern "C" int airplay_android_audio_delay(long *frames) {
+    if (!g_sps || !g_sps->sink) return -1;
+    return pcm_sink_delay_frames(g_sps->sink, frames);
+}
+
+/* --- lifecycle --- */
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeStartShairport(
+        JNIEnv *env, jobject thiz, jobject callback, jstring name, jstring metaPipe,
+        jstring logPath, jint port, jint verbosity) {
+
+    if (g_sps) {
+        LOGE("shairport-sync is already running");
+        return JNI_FALSE;
+    }
+
+    sps_ctx_t *ctx = new sps_ctx_t();
+    android_callbacks_init(&ctx->cb, env, callback);
+    ctx->cb.audio_engine = NULL;  /* decoded PCM goes through pcm_sink instead */
+    ctx->sink = pcm_sink_create();
+
+    const char *meta = env->GetStringUTFChars(metaPipe, NULL);
+    const char *name_c = env->GetStringUTFChars(name, NULL);
+    const char *log_c = env->GetStringUTFChars(logPath, NULL);
+
+    /* the reader has to be listening before shairport-sync opens the pipe for writing */
+    int rc = sps_metadata_start(meta, &ctx->cb);
+    if (rc != 0) LOGE("metadata pipe %s is not usable; continuing without metadata", meta);
+
+    sps_android_set_exit_callback(&_sps_exit_reported);
+    rc = sps_android_start(name_c, meta, log_c, (int) port, (int) verbosity);
+
+    env->ReleaseStringUTFChars(metaPipe, meta);
+    env->ReleaseStringUTFChars(name, name_c);
+    env->ReleaseStringUTFChars(logPath, log_c);
+
+    if (rc != 0) {
+        LOGE("shairport-sync failed to start: %d", rc);
+        sps_metadata_stop();
+        pcm_sink_destroy(ctx->sink);
+        android_callbacks_destroy(&ctx->cb, env);
+        delete ctx;
+        return JNI_FALSE;
+    }
+
+    g_sps = ctx;
+    LOGI("shairport-sync started on port %d", (int) port);
+    return JNI_TRUE;
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeStopShairport(
+        JNIEnv *env, jobject thiz) {
+
+    if (!g_sps) return;
+
+    /* order matters: stop the receiver first so it cannot write to a closed sink */
+    sps_android_stop();
+    sps_metadata_stop();
+    pcm_sink_stop(g_sps->sink);
+    sps_android_set_exit_callback(NULL);
+
+    pcm_sink_destroy(g_sps->sink);
+    g_sps->sink = NULL;
+    android_callbacks_destroy(&g_sps->cb, env);
+    delete g_sps;
+    g_sps = NULL;
+    LOGI("shairport-sync stopped");
+}
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeShairportRunning(
+        JNIEnv *env, jobject thiz) {
+    return sps_android_is_running() ? JNI_TRUE : JNI_FALSE;
+}
+
+

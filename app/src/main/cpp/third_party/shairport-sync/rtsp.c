@@ -82,6 +82,10 @@
 #include "rtp.h"
 #include "rtsp.h"
 
+#ifdef CONFIG_ANDROID
+#include "android_start.h"
+#endif
+
 #ifdef CONFIG_METADATA
 #include "metadata/core.h"
 #include "metadata/pc_queue.h"
@@ -4519,6 +4523,15 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
         break;
       }
 
+#ifdef CONFIG_ANDROID
+      // in-process build: sps_android_stop() sets this flag and wakes select() with a
+      // connection to our own port, so leaving here is prompt and orderly
+      if (sps_android_stop_requested()) {
+        debug(1, "Stop requested -- leaving the listening loop.");
+        break;
+      }
+#endif
+
       cleanup_threads();
 
       acceptfd = -1;
@@ -4722,5 +4735,8 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
         config.port);
   }
   debug(1, "Fell out of the RTSP select loop -- this should never happen!");
+#ifdef CONFIG_ANDROID
+  sps_android_note_listener_stopped();
+#endif
   pthread_exit(NULL);
 }

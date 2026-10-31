@@ -152,9 +152,15 @@ void _die(const char *filename, const int linenumber, const char *format, ...) {
     local_exit_requester(EXIT_FAILURE);
     // wait for the exit request to be honoured
     usleep(1000000);
+#ifdef CONFIG_ANDROID
+    // in-process build: the exit manager unwinds itself, so this thread only has
+    // to stop.  _Exit() here would take the host application down with it.
+    pthread_exit(NULL);
+#else
     // if not, head for the hills
     fprintf(stderr, "fatal error: exit cleanup could not be completed.\n");
     _Exit(EXIT_FAILURE);
+#endif
   }
 }
 

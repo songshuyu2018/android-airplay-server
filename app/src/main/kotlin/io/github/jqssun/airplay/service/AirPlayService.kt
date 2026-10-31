@@ -56,6 +56,7 @@ import io.github.jqssun.airplay.renderer.AirPlayVideoPlayer
 import io.github.jqssun.airplay.renderer.AudioRenderer
 import io.github.jqssun.airplay.renderer.VideoRenderer
 import io.github.jqssun.airplay.viewmodel.DebugInfo
+import java.io.File
 import java.net.NetworkInterface
 import java.security.SecureRandom
 import kotlin.math.abs
@@ -401,6 +402,13 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
 
         nsdManager = NsdServiceManager(this).apply { acquireMulticastLock() }
 
+        // shairport-sync advertises itself over mDNS, so the app only keeps the
+        // multicast lock here and does no NsdManager registration of its own
+        if (prefs[Prefs.USE_SHAIRPORT]) {
+            _startShairport(effectiveName, ensureServiceStarted)
+            return
+        }
+
         val hwAddr = getHwAddr()
         val keyFile = filesDir.resolve("airplay.pem").absolutePath
         val nohold = prefs[Prefs.ALLOW_NEW_CONN]
@@ -494,6 +502,34 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         log("Server started on port $port")
     }
 
+    /**
+     * Starts the shairport-sync receiver (see Prefs.USE_SHAIRPORT).  There is no handle to
+     * keep: the receiver lives in native globals, and it advertises itself over mDNS, so
+     * nothing is registered with NsdManager here.
+     */
+    private fun _startShairport(effectiveName: String, ensureServiceStarted: Boolean) {
+        val metaPipe = File(filesDir, "sps-metadata").absolutePath
+        val logFile = File(filesDir, "shairport.log")
+        // only the current session is of interest, and the log grows quickly at verbosity 2+
+        logFile.delete()
+        val port = prefs[Prefs.SERVER_PORT]
+        val verbosity = prefs[Prefs.SHAIRPORT_VERBOSITY]
+        val started = NativeBridge.nativeStartShairport(
+            this, effectiveName, metaPipe, logFile.absolutePath, port, verbosity
+        )
+        if (!started) {
+            log("shairport-sync failed to start (see ${logFile.name})")
+            _failStart()
+            return
+        }
+        _serverState.value = ServerState.RUNNING
+        if (ensureServiceStarted) {
+            ContextCompat.startForegroundService(this, Intent(this, AirPlayService::class.java))
+        }
+        promoteToForeground()
+        log("Server started on port $port (shairport-sync)")
+    }
+
     private fun _orientationFollowsDevice(): Boolean =
         prefs[Prefs.RESOLUTION] == Prefs.AUTO
 
@@ -553,6 +589,15 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
 
     private fun _restartServer() {
         if (_serverState.value != ServerState.RUNNING) return
+        if (prefs[Prefs.USE_SHAIRPORT]) {
+            // shairport-sync can only run once per process: its helper threads cannot be
+            // stopped, so re-running its startup would trip over their queues.  Stop and
+            // say what to do instead of showing a failure.
+            _shutdown()
+            _serverState.value = ServerState.STOPPED
+            log("Restart the app to apply settings while shairport-sync is the receiver")
+            return
+        }
         _shutdown()
         _startServer(ensureServiceStarted = false)
         if (_serverState.value != ServerState.RUNNING) stopSelf()
@@ -565,6 +610,8 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             NativeBridge.nativeDestroy(nativeHandle)
             nativeHandle = 0L
         }
+        // no-op unless a shairport-sync receiver was started; releases its sink and reader
+        NativeBridge.nativeStopShairport()
         dacpController?.reset()
         usbAdvertiser?.stop()
         usbAdvertiser = null

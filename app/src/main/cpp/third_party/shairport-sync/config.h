@@ -4,6 +4,8 @@
 
 /* Build for AirPlay 2 */
 #define CONFIG_AIRPLAY_2 1
+/* In-process build: no exit()/fork()/daemonise, see android_start.h */
+#define CONFIG_ANDROID 1
 #define CONFIG_LIBCONFIG 1
 #define CONFIG_POPT 1
 

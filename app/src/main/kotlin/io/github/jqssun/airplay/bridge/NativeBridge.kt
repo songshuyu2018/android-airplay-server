@@ -52,4 +52,21 @@ object NativeBridge {
     external fun nativeServerAudioFormat(handle: Long, ct: Int, spf: Int)
     // fills direct buffer with packed debug snapshot; false if audio isn't running
     external fun nativeServerAudioDebug(handle: Long, buf: java.nio.ByteBuffer): Boolean
+
+    /**
+     * shairport-sync receiver (see Prefs.USE_SHAIRPORT). It keeps its state in globals,
+     * so there is one per process and no handle. [metaPipe] is a FIFO path the native
+     * side creates, [logPath] receives the daemon's stdout and stderr.
+     */
+    external fun nativeStartShairport(
+        callback: RaopCallbackHandler,
+        name: String,
+        metaPipe: String,
+        logPath: String,
+        port: Int,
+        verbosity: Int
+    ): Boolean
+
+    external fun nativeStopShairport()
+    external fun nativeShairportRunning(): Boolean
 }

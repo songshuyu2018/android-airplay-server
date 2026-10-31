@@ -88,6 +88,10 @@
 #include "utilities/exit.h"
 #include "utilities/string_utilities.h"
 
+#ifdef CONFIG_ANDROID
+#include "android_start.h"
+#endif
+
 #if defined(CONFIG_DACP_CLIENT)
 #include "dacp.h"
 #endif
@@ -2031,7 +2035,11 @@ int parse_options(int argc, char **argv) {
             "%s was built without libdaemon, so does not support daemonisation using the "
             "-d, --daemon, -j or --justDaemoniseNoPIDFile options\n",
             config.appName);
+#ifdef CONFIG_ANDROID
+    sps_android_exit(EXIT_FAILURE);
+#else
     exit(EXIT_FAILURE);
+#endif
   }
 
 #endif
@@ -2686,7 +2694,11 @@ int main(int argc, char **argv) {
   /* Check if we are called with -V or --version parameter */
   if (argc >= 2 && ((strcmp(argv[1], "-V") == 0) || (strcmp(argv[1], "--version") == 0))) {
     print_version();
+#ifdef CONFIG_ANDROID
+    sps_android_exit(EXIT_SUCCESS);
+#else
     exit(EXIT_SUCCESS);
+#endif
   }
 
   // this is a bit weird, but necessary -- basename() may modify the argument passed in
@@ -2723,7 +2735,11 @@ int main(int argc, char **argv) {
   /* Check if we are called with -h or --help parameter */
   if (argc >= 2 && ((strcmp(argv[1], "-h") == 0) || (strcmp(argv[1], "--help") == 0))) {
     usage(argv[0]);
+#ifdef CONFIG_ANDROID
+    sps_android_exit(EXIT_SUCCESS);
+#else
     exit(EXIT_SUCCESS);
+#endif
   }
 
   /*
@@ -2746,7 +2762,12 @@ int main(int argc, char **argv) {
   openlog(NULL, 0, LOG_DAEMON);
 #endif
   debug(1, "adding the exit function");
+#ifndef CONFIG_ANDROID
+  /* In-process the process outlives the receiver, and exit_function() would block in
+   * pthread_join() on threads that bionic cannot cancel.  Cleanup on shutdown is done
+   * by sps_android_stop() instead. */
   atexit(exit_function);
+#endif
 
   config.service_type = APST_auto; // this may be changed by the settings...
 
@@ -2869,7 +2890,11 @@ int main(int argc, char **argv) {
     display_config(argc, argv);
     if (argc == 2) {
       inform(">> Goodbye!");
+#ifdef CONFIG_ANDROID
+      sps_android_exit(EXIT_SUCCESS);
+#else
       exit(EXIT_SUCCESS);
+#endif
     }
   }
 
@@ -3031,7 +3056,11 @@ int main(int argc, char **argv) {
   debug(1, "Startup in Classic AirPlay (aka \"AirPlay 1\") mode.");
 #endif
 
+#ifndef CONFIG_ANDROID
   // control-c (SIGINT) cleanly
+  // In-process these handlers would take over signals the app itself relies on
+  // (SIGTERM is how Android stops processes, SIGCHLD is used by the runtime), so they
+  // are installed only in the standalone build.
   struct sigaction act;
   memset(&act, 0, sizeof(struct sigaction));
   act.sa_handler = intHandler;
@@ -3042,10 +3071,12 @@ int main(int argc, char **argv) {
   memset(&act2, 0, sizeof(struct sigaction));
   act2.sa_handler = termHandler;
   sigaction(SIGTERM, &act2, NULL);
+#endif /* !CONFIG_ANDROID */
 
   // stop a pipe signal from killing the program
   signal(SIGPIPE, SIG_IGN);
 
+#ifndef CONFIG_ANDROID
   // install a zombie process reaper
   // see: http://www.microhowto.info/howto/reap_zombie_processes_using_a_sigchld_handler.html
   struct sigaction sa;
@@ -3056,6 +3087,7 @@ int main(int argc, char **argv) {
     perror(0);
     exit(1);
   }
+#endif /* !CONFIG_ANDROID */
 
   // make sure the program can create files that group and world can read
   umask(S_IWGRP | S_IWOTH);
@@ -3730,11 +3762,25 @@ int main(int argc, char **argv) {
   // note: the Avahi Threaded Poll thread will be named after whatever name you use here too, so
   // you'll see two threads named "listener" or whatever...
   named_pthread_create(&rtsp_listener_thread, NULL, &rtsp_listen_loop, NULL, "listener");
+#ifndef CONFIG_ANDROID
+  /* cancels + joins the listener thread; bionic has no pthread_cancel(), and
+   * sps_android_stop() stops the loop cooperatively instead */
   atexit(exit_rtsp_listener);
+#endif
 
+#ifdef CONFIG_ANDROID
+  // The application owns the process, so main() parks here until it is asked to stop
+  // and then leaves by ending this thread (sps_android_exit() semantics).
+  while (!sps_android_stop_requested())
+    usleep(200000);
+  debug(1, "stop requested -- main() is leaving");
+  sps_android_note_main_exited(EXIT_SUCCESS);
+  pthread_exit(NULL);
+#else
   // wait forever...
   while (1) {
     usleep(1000000);
   }
+#endif
   return 0;
 }

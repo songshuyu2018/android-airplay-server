@@ -187,6 +187,10 @@
     <string name="setting_debug_overlay_desc">Overlay stream stats on video: codec, FPS, bitrate, jitter, frames, drops</string>
     <string name="setting_benchmark_log">Enable debug logging</string>
     <string name="setting_benchmark_log_desc">Log stream stats to logcat: codec, FPS, bitrate, jitter, frames, drops</string>
+    <string name="setting_use_shairport">Use shairport-sync receiver</string>
+    <string name="setting_use_shairport_desc">Receive with shairport-sync instead of the built-in engine. Audio only, still being validated.</string>
+    <string name="setting_shairport_verbosity">shairport-sync log verbosity</string>
+    <string name="setting_shairport_verbosity_desc">0 = errors only, 3 = everything. Written to shairport.log in the app data directory.</string>
 
     <!-- Debug overlay -->
     <string name="debug_section_video">Video</string>

@@ -127,6 +127,9 @@ set(BRIDGE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/android_raop_callbacks.c
     ${CMAKE_CURRENT_SOURCE_DIR}/native_bridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/audio_engine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pcm_sink.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/sps_metadata.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/sps_metadata_parse.cpp
 )
 
 # ---------- Final shared library ----------

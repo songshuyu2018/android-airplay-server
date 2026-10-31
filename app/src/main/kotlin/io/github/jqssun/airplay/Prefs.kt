@@ -114,4 +114,9 @@ object Prefs {
     val ADVERTISE_AUDIO = bool("advertise_audio", true, restart = true)
     val LAUNCH_ON_CONNECT = bool("launch_on_connect", true)
     val USB_ONLY = bool("usb_only", false, restart = true)
+    // receive with shairport-sync instead of the UxPlay path; kept as a switch until the
+    // shairport-sync runtime has been validated on devices
+    val USE_SHAIRPORT = bool("use_shairport", false, restart = true)
+    // shairport-sync diagnostic verbosity: 0 quiet .. 3 very chatty
+    val SHAIRPORT_VERBOSITY = int("shairport_verbosity", 2, 0..3, restart = true)
 }

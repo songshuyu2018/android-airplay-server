@@ -41,6 +41,10 @@ SOFTWARE.
 #include "common.h"
 #include "exit.h"
 
+#ifdef CONFIG_ANDROID
+#include "android_start.h"
+#endif
+
 volatile sig_atomic_t exit_request_flag = 0;
 volatile sig_atomic_t exit_status = EXIT_SUCCESS;
 
@@ -57,7 +61,12 @@ void *exit_manager(__attribute__((unused)) void *arg) {
       }
     }
   }
+#ifdef CONFIG_ANDROID
+  /* in-process build: unwind this thread, never the host application */
+  sps_android_exit(exit_status);
+#else
   exit(exit_status);
+#endif
   return NULL;
 }
 
