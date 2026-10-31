@@ -25,6 +25,9 @@ target_compile_options(shairport_sync PRIVATE
     "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/config.h"
     "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/utilities/debug.h"
     -Wno-multichar -Wno-unused-parameter -Wno-format)
+# bionic has no pthread_cancel(); the monitor thread it targets polls and exits
+# on its own, so neutralising the call is safe here.
+target_compile_definitions(shairport_sync PRIVATE "pthread_cancel(t)=0")
 
 target_compile_definitions(shairport_sync PRIVATE
     _GNU_SOURCE
