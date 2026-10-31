@@ -20,9 +20,6 @@ set(FORWARD_ANDROID_NDK_ROOT "${ANDROID_NDK}" CACHE STRING "" FORCE) # CI
 list(PREPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/openssl-cmake)
-add_subdirectory(third_party/libconfig-src)
-add_subdirectory(third_party/popt-src)
-add_subdirectory(third_party/shairport-sync)
 
 # ---------- Sanitizers (opt-in via -DSANITIZE=ON) ----------
 # OpenSSL uninstrumented; HWASan is arm64-only
@@ -133,6 +130,11 @@ set(BRIDGE_SOURCES
 )
 
 # ---------- Final shared library ----------
+add_subdirectory(third_party/libconfig-src)
+add_subdirectory(third_party/popt-src)
+add_subdirectory(third_party/shairport-sync)
+target_link_libraries(shairport_sync PUBLIC ffmpeg::avcodec ffmpeg::avformat ffmpeg::avutil plist)
+
 add_library(airplay_native SHARED
     ${AIRPLAY_SOURCES}
     ${BRIDGE_SOURCES}
