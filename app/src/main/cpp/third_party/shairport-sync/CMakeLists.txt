@@ -14,7 +14,9 @@ list(REMOVE_ITEM SPS_SOURCES
 list(REMOVE_ITEM SPS_SOURCES
      "${CMAKE_CURRENT_SOURCE_DIR}/shairport-sync-dbus-test-client.c"
      "${CMAKE_CURRENT_SOURCE_DIR}/shairport-sync-mpris-test-client.c"
-     "${CMAKE_CURRENT_SOURCE_DIR}/utilities/g_variant_pretty_print.c")
+     "${CMAKE_CURRENT_SOURCE_DIR}/utilities/g_variant_pretty_print.c"
+     "${CMAKE_CURRENT_SOURCE_DIR}/utilities/ir_file_support.c"     # needs libsndfile
+     "${CMAKE_CURRENT_SOURCE_DIR}/utilities/plist_gvariant_stuff.c")  # needs glib
 
 add_library(shairport_sync STATIC ${SPS_SOURCES})
 
