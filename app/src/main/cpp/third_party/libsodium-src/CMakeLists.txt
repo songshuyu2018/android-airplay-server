@@ -7,6 +7,7 @@ file(GLOB_RECURSE SODIUM_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/
 add_library(sodium STATIC ${SODIUM_SOURCES})
 target_include_directories(sodium PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/libsodium/include)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/libsodium/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/libsodium/include/sodium)
 target_compile_definitions(sodium PUBLIC SODIUM_STATIC=1)
 target_compile_options(sodium PRIVATE -Wno-unused-parameter -Wno-sign-compare -Wno-macro-redefined)
