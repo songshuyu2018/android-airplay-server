@@ -134,7 +134,7 @@ add_subdirectory(third_party/libsodium-src)
 add_subdirectory(third_party/libconfig-src)
 add_subdirectory(third_party/popt-src)
 add_subdirectory(third_party/shairport-sync)
-target_link_libraries(shairport_sync PUBLIC sodium ffmpeg::avformat ffmpeg::swresample ffmpeg::avcodec ffmpeg::avutil plist)
+target_link_libraries(shairport_sync PUBLIC crypto ssl sodium ffmpeg::avformat ffmpeg::swresample ffmpeg::avcodec ffmpeg::avutil plist)
 add_dependencies(shairport_sync ffmpeg_ep)
 
 add_library(airplay_native SHARED
