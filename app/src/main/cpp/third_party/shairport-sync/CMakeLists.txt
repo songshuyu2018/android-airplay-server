@@ -10,6 +10,11 @@ list(REMOVE_ITEM SPS_SOURCES
      "${CMAKE_CURRENT_SOURCE_DIR}/audio_stdout.c"
      "${CMAKE_CURRENT_SOURCE_DIR}/audio_pipe.c"
      "${CMAKE_CURRENT_SOURCE_DIR}/dacp.c")   # needs libtinyhttp; DACP client is off
+# DBus/Mpris test clients and the glib helper they need
+list(REMOVE_ITEM SPS_SOURCES
+     "${CMAKE_CURRENT_SOURCE_DIR}/shairport-sync-dbus-test-client.c"
+     "${CMAKE_CURRENT_SOURCE_DIR}/shairport-sync-mpris-test-client.c"
+     "${CMAKE_CURRENT_SOURCE_DIR}/utilities/g_variant_pretty_print.c")
 
 add_library(shairport_sync STATIC ${SPS_SOURCES})
 
