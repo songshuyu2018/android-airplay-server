@@ -34,6 +34,18 @@ static inline int sps_android_pthread_attr_setinheritsched(pthread_attr_t *a, in
 #undef pthread_attr_setinheritsched
 #define pthread_attr_setinheritsched(a, s) sps_android_pthread_attr_setinheritsched((a), (s))
 
+
+#undef pthread_testcancel
+#define pthread_testcancel() ((void) 0)
+
+/* shm_open() appears in bionic's headers from API 26; declare it so the NQPTP
+ * shared-memory interface compiles on our API 24 baseline. At runtime it is
+ * present on every device this app supports. */
+#ifndef SHM_OPEN_DECLARED_BY_BIONIC
+#include <sys/types.h>
+extern int shm_open(const char *name, int oflag, mode_t mode);
+#endif
+
 #endif /* __ANDROID__ */
 
 #endif /* SPS_ANDROID_COMPAT_H */
