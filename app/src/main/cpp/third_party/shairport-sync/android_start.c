@@ -99,6 +99,8 @@ void sps_android_set_exit_callback(sps_android_exit_cb cb) { exit_callback = cb;
 
 int sps_android_is_running(void) { return running; }
 
+int sps_android_has_run(void) { return starts_so_far > 0; }
+
 /* True for the lifetime of a run once its stop has been requested. */
 int sps_android_stop_requested(void) { return stopped_run != 0 && stopped_run >= run_number; }
 

@@ -577,4 +577,12 @@ Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeShairportRunning(
     return sps_android_is_running() ? JNI_TRUE : JNI_FALSE;
 }
 
+/* The receiver cannot be restarted in place, so the app asks this before trying. */
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeShairportUsed(
+        JNIEnv *env, jobject thiz) {
+    return sps_android_has_run() ? JNI_TRUE : JNI_FALSE;
+}
+
 

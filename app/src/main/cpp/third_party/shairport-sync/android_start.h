@@ -49,6 +49,10 @@ int sps_android_stop(void);
 
 int sps_android_is_running(void);
 
+/* True once a receiver has run in this process, whether or not it still is: the app
+ * uses it to know that restarting one in place is impossible. */
+int sps_android_has_run(void);
+
 /* --- used by the patched shairport-sync sources --- */
 
 /* Replacement for exit(): never terminates the process. */

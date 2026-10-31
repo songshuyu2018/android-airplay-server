@@ -69,4 +69,6 @@ object NativeBridge {
 
     external fun nativeStopShairport()
     external fun nativeShairportRunning(): Boolean
+    /** true once a receiver has run in this process; it cannot be started again in place */
+    external fun nativeShairportUsed(): Boolean
 }

@@ -589,13 +589,14 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
 
     private fun _restartServer() {
         if (_serverState.value != ServerState.RUNNING) return
-        if (prefs[Prefs.USE_SHAIRPORT]) {
+        if (prefs[Prefs.USE_SHAIRPORT] && NativeBridge.nativeShairportUsed()) {
             // shairport-sync can only run once per process: its helper threads cannot be
             // stopped, so re-running its startup would trip over their queues.  Stop and
-            // say what to do instead of showing a failure.
+            // say what to do instead of showing a failure.  Turning the receiver *off*
+            // still works in place, because that only starts the UxPlay path again.
             _shutdown()
             _serverState.value = ServerState.STOPPED
-            log("Restart the app to apply settings while shairport-sync is the receiver")
+            log("Restart the app to start shairport-sync again (it runs once per process)")
             return
         }
         _shutdown()
