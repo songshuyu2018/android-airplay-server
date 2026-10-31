@@ -24,6 +24,7 @@ target_include_directories(shairport_sync PUBLIC
 target_compile_options(shairport_sync PRIVATE
     "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/config.h"
     "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/utilities/debug.h"
+    "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/sps_android_compat.h"
     -Wno-multichar -Wno-unused-parameter -Wno-format)
 
 target_compile_definitions(shairport_sync PRIVATE
