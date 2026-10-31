@@ -723,8 +723,13 @@ uint8_t *base64_dec(char *input, int *outlen) {
 
 #ifdef CONFIG_OPENSSL
 char *base64_enc(uint8_t *input, int length) {
+#ifdef __ANDROID__
+  /* bionic has no thread cancellation */
+  const int oldState = 0;
+#else
   int oldState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
+#endif
   BIO *bmem, *b64;
   BUF_MEM *bptr;
   b64 = BIO_new(BIO_f_base64());
@@ -745,13 +750,20 @@ char *base64_enc(uint8_t *input, int length) {
 
   BIO_free_all(b64);
 
+#ifndef __ANDROID__
   pthread_setcancelstate(oldState, NULL);
+#endif
   return buf;
 }
 
 uint8_t *base64_dec(char *input, int *outlen) {
+#ifdef __ANDROID__
+  /* bionic has no thread cancellation */
+  const int oldState = 0;
+#else
   int oldState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
+#endif
   BIO *bmem, *b64;
   int inlen = strlen(input);
 
@@ -775,7 +787,9 @@ uint8_t *base64_dec(char *input, int *outlen) {
   BIO_free_all(b64);
 
   *outlen = nread;
+#ifndef __ANDROID__
   pthread_setcancelstate(oldState, NULL);
+#endif
   return buf;
 }
 #endif
@@ -807,8 +821,13 @@ static char super_secret_key[] =
 
 #ifdef CONFIG_OPENSSL
 uint8_t *rsa_apply(uint8_t *input, int inlen, int *outlen, int mode) {
+#ifdef __ANDROID__
+  /* bionic has no thread cancellation */
+  const int oldState = 0;
+#else
   int oldState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
+#endif
   uint8_t *out = NULL;
   BIO *bmem = BIO_new_mem_buf(super_secret_key, -1);                  // 1.0.2
   EVP_PKEY *rsaKey = PEM_read_bio_PrivateKey(bmem, NULL, NULL, NULL); // 1.0.2
@@ -885,7 +904,9 @@ uint8_t *rsa_apply(uint8_t *input, int inlen, int *outlen, int mode) {
     printf("error \"%s\" with EVP_PKEY_new:\n", ERR_error_string(ERR_get_error(), NULL));
   }
   *outlen = ol;
+#ifndef __ANDROID__
   pthread_setcancelstate(oldState, NULL);
+#endif
   return out;
 }
 #endif
@@ -1935,10 +1956,17 @@ void thread_cleanup(void *arg) {
   debug(3, "thread_cleanup called.");
   pthread_t *thread = (pthread_t *)arg;
   pthread_cancel(*thread);
+#ifdef __ANDROID__
+  /* bionic has no thread cancellation */
+  const int oldState = 0;
+#else
   int oldState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
+#endif
   pthread_join(*thread, NULL);
+#ifndef __ANDROID__
   pthread_setcancelstate(oldState, NULL);
+#endif
   debug(3, "thread_cleanup done.");
 }
 
@@ -2354,7 +2382,9 @@ int get_device_id(uint8_t *id, int int_length) {
       }
       freeifaddrs(ifaddr);
     }
-    pthread_setcancelstate(oldState, NULL);
+  #ifndef __ANDROID__
+  pthread_setcancelstate(oldState, NULL);
+#endif
     // wait a little time if we haven't got a response
     if (response != 0) {
       usleep(100000);
@@ -2367,13 +2397,20 @@ int get_device_id(uint8_t *id, int int_length) {
 }
 
 char *bnprintf(char *buffer, ssize_t max_bytes, const char *format, ...) {
+#ifdef __ANDROID__
+  /* bionic has no thread cancellation */
+  const int oldState = 0;
+#else
   int oldState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
+#endif
   va_list args;
   va_start(args, format);
   vsnprintf(buffer, max_bytes, format, args);
   va_end(args);
+#ifndef __ANDROID__
   pthread_setcancelstate(oldState, NULL);
+#endif
   // debug(1,"bnprintf string is: \"%s\"", buffer);
   return buffer;
 }
