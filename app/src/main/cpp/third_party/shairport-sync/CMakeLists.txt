@@ -16,13 +16,14 @@ target_include_directories(shairport_sync PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/utilities
     ${CMAKE_CURRENT_SOURCE_DIR}/metadata
-    ${CMAKE_CURRENT_SOURCE_DIR}/pair_ap)
+    ${CMAKE_CURRENT_SOURCE_DIR}/pair_ap
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libplist/include)
 
 # shairport-sync relies on these being force-included (autotools passes
 # --include=config.h --include=utilities/debug.h)
 target_compile_options(shairport_sync PRIVATE
-    "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/config.h"
-    "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/utilities/debug.h"
+    -include ${CMAKE_CURRENT_SOURCE_DIR}/config.h
+    -include ${CMAKE_CURRENT_SOURCE_DIR}/utilities/debug.h
     -Wno-multichar -Wno-unused-parameter -Wno-format)
 
 target_compile_definitions(shairport_sync PRIVATE
