@@ -177,6 +177,14 @@ void SpsMetadataParser::handleItem() {
             case fourcc('p', 'b', 'e', 'g'):
                 if (sink.playback) sink.playback(sink.ctx, 1);
                 break;
+            /* active mode: the app has no other way to tell that a sender is
+             * connected, because shairport-sync does not report RTSP connections */
+            case fourcc('a', 'b', 'e', 'g'):
+                if (sink.playback) sink.playback(sink.ctx, 2);
+                break;
+            case fourcc('a', 'e', 'n', 'd'):
+                if (sink.playback) sink.playback(sink.ctx, 3);
+                break;
             case fourcc('d', 'a', 'i', 'd'):
             case fourcc('a', 'c', 'r', 'e'): {
                 char *slot = code == fourcc('d', 'a', 'i', 'd') ? dacpId : activeRemote;

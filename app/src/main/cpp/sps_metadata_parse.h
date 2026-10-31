@@ -35,8 +35,8 @@ typedef struct {
     void (*progress)(void *ctx, uint32_t start, uint32_t current, uint32_t end);
     /* the sender's remote-control identifiers, both known */
     void (*dacp)(void *ctx, const char *dacp_id, const char *active_remote);
-    /* 0 = paused, 1 = resumed */
-    void (*playback)(void *ctx, int playing);
+    /* 0 = paused, 1 = resumed, 2 = session became active, 3 = session ended */
+    void (*playback)(void *ctx, int state);
 } sps_metadata_sink_t;
 
 typedef struct SpsMetadataParser SpsMetadataParser;

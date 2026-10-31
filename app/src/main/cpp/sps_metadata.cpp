@@ -100,15 +100,25 @@ void onDacp(void *opaque, const char *dacpId, const char *activeRemote) {
     LOGI("DACP ready, id %s", dacpId);
 }
 
-void onPlayback(void *opaque, int playing) {
+void onPlayback(void *opaque, int state) {
     auto *ctx = static_cast<android_callback_ctx_t *>(opaque);
     JNIEnv *env = attachEnv(ctx->jvm);
     if (!env) return;
-    if (playing) {
-        if (ctx->on_audio_resume)
-            env->CallVoidMethod(ctx->callback_obj, ctx->on_audio_resume);
-    } else {
-        if (ctx->on_audio_flush) env->CallVoidMethod(ctx->callback_obj, ctx->on_audio_flush);
+    switch (state) {
+        case 1:  // resumed
+            if (ctx->on_audio_resume)
+                env->CallVoidMethod(ctx->callback_obj, ctx->on_audio_resume);
+            break;
+        case 2:  // a sender became active
+            if (ctx->on_conn_init) env->CallVoidMethod(ctx->callback_obj, ctx->on_conn_init);
+            break;
+        case 3:  // the session ended
+            if (ctx->on_conn_destroy) env->CallVoidMethod(ctx->callback_obj, ctx->on_conn_destroy);
+            break;
+        default:  // paused
+            if (ctx->on_audio_flush)
+                env->CallVoidMethod(ctx->callback_obj, ctx->on_audio_flush);
+            break;
     }
 }
 

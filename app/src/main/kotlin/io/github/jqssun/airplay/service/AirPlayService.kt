@@ -523,6 +523,9 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             return
         }
         _serverState.value = ServerState.RUNNING
+        // shairport-sync is an audio receiver: tell the UI so that cover art is shown
+        // instead of the video surface, which no sender will ever fill here
+        _setAudioOnly(true)
         if (ensureServiceStarted) {
             ContextCompat.startForegroundService(this, Intent(this, AirPlayService::class.java))
         }
