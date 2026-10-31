@@ -21,8 +21,8 @@ target_include_directories(shairport_sync PUBLIC
 # shairport-sync relies on these being force-included (autotools passes
 # --include=config.h --include=utilities/debug.h)
 target_compile_options(shairport_sync PRIVATE
-    -include config.h
-    -include utilities/debug.h
+    -include ${CMAKE_CURRENT_SOURCE_DIR}/config.h
+    -include ${CMAKE_CURRENT_SOURCE_DIR}/utilities/debug.h
     -Wno-multichar -Wno-unused-parameter -Wno-format)
 
 target_compile_definitions(shairport_sync PRIVATE
