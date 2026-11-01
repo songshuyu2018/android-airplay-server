@@ -35,6 +35,11 @@ void pcm_sink_flush(PcmSink *sink);
  * number of frames accepted. */
 int pcm_sink_write(PcmSink *sink, const void *buf, int frames);
 
+/* Frames handed to the output stream since it was (re)started.  This is the clock
+ * the listener actually hears, so the app derives the playback position from it
+ * when the sender does not report progress (Music Assistant does not). */
+int pcm_sink_playout_frames(PcmSink *sink, uint64_t *frames);
+
 /* Frames written but not yet played out -- shairport uses this as the backend
  * delay for its timing corrections.  Returns 0 and sets *frames, or -1. */
 int pcm_sink_delay_frames(PcmSink *sink, long *frames);

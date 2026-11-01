@@ -21,6 +21,9 @@ object NativeBridge {
      *  trackStartRtp is the `start` field of the sender's progress line */
     external fun nativeGetAudiblePositionMs(handle: Long, trackStartRtp: Long): Long
 
+    /** frames the shairport-sync PCM output has played since it started, or -1 */
+    external fun nativePcmPlayoutFrames(): Long
+
     external fun nativeStart(handle: Long, port: Int): Int
     external fun nativeStop(handle: Long)
     external fun nativeDestroy(handle: Long)

@@ -362,6 +362,12 @@ int pcm_sink_write(PcmSink *sink, const void *buf, int frames) {
     return accepted;
 }
 
+int pcm_sink_playout_frames(PcmSink *sink, uint64_t *frames) {
+    if (!sink || !frames) return -1;
+    *frames = sink->framesFed.load(std::memory_order_relaxed);
+    return 0;
+}
+
 int pcm_sink_delay_frames(PcmSink *sink, long *frames) {
     if (!sink || !frames) return -1;
     const size_t queued = sink->ring.availableToRead() / (size_t)(sink->channels > 0 ? sink->channels : 1);

@@ -171,6 +171,10 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     @Volatile private var _pendingSeekMs = -1L
     /** throttles the progress log line to one per second */
     @Volatile private var _progressLoggedAt = 0L
+    /** output frames played when the position was last anchored, -1 = use the wall clock */
+    @Volatile private var _progressBaseFrames = -1L
+    /** true while shairport-sync is the receiver: only then is the PCM clock meaningful */
+    @Volatile private var _pcmClock = false
 
     fun currentPositionMs(): Long {
         // Prefer the position of the audio actually being rendered: the sender's
@@ -181,7 +185,16 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             if (audible >= 0) return audible
         }
         if (_progressBaseTime == 0L || !_playing.value) return _positionMs.value
-        val elapsed = SystemClock.elapsedRealtime() - _progressBaseTime
+        // Advance with the frames the output has actually played when the receiver is
+        // shairport-sync.  Music Assistant never sends a progress line, so the wall
+        // clock was the only thing left: it runs through stalls, and it cannot know
+        // that a track began part-way through the buffer.
+        val elapsed = if (_pcmClock && _progressBaseFrames >= 0L) {
+            val now = NativeBridge.nativePcmPlayoutFrames()
+            if (now >= _progressBaseFrames) (now - _progressBaseFrames) * 1000L / 44100L else 0L
+        } else {
+            SystemClock.elapsedRealtime() - _progressBaseTime
+        }
         val pos = _progressBaseMs + elapsed
         // The sender does not always tell us a duration (a track started mid-way
         // reports end == start). Clamping to a zero duration would pin the shown
@@ -497,6 +510,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         }
 
         _serverState.value = ServerState.RUNNING
+        _pcmClock = false
         if (ensureServiceStarted) {
             ContextCompat.startForegroundService(this, Intent(this, AirPlayService::class.java))
         }
@@ -525,6 +539,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             return
         }
         _serverState.value = ServerState.RUNNING
+        _pcmClock = true
         // shairport-sync is an audio receiver: tell the UI so that cover art is shown
         // instead of the video surface, which no sender will ever fill here
         _setAudioOnly(true)
@@ -937,8 +952,21 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     override fun onMetadata(data: ByteArray) {
         val map = DmapParser.parse(data)
         val info = TrackInfo.fromDmap(map, _trackInfo.value.coverArt)
+        val previous = _trackInfo.value
+        // A different length means a different item: the sender's timeline restarts at
+        // the beginning of the new track, and without a progress line nothing else
+        // would say so.  Lyrics/rating updates of the same item keep the length.
+        val newTrack = info.durationMs > 0 && previous.durationMs > 0 &&
+            kotlin.math.abs(info.durationMs - previous.durationMs) > 1000L
         _trackInfo.value = info
         if (info.durationMs > 0) _durationMs.value = info.durationMs
+        if (newTrack || _progressBaseTime == 0L) {
+            // also the very first item of a session: nothing has anchored the clock yet
+            _positionMs.value = 0
+            _progressBaseMs = 0
+            _progressBaseTime = SystemClock.elapsedRealtime()
+            _progressBaseFrames = if (_pcmClock) NativeBridge.nativePcmPlayoutFrames() else -1L
+        }
         _trackStartRtp = -1L   // new track: wait for its progress line before using the clock
         _updateMediaMetadata()
         _refreshDacpPlayer()
@@ -1047,6 +1075,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         if (durKnown) _durationMs.value = durMs
         _progressBaseMs = posMs
         _progressBaseTime = SystemClock.elapsedRealtime()
+        _progressBaseFrames = if (_pcmClock) NativeBridge.nativePcmPlayoutFrames() else -1L
         _playing.value = true
         _updatePlaybackState()
         _refreshDacpPlayer()
@@ -1112,10 +1141,12 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             // resume extrapolation from current position
             _progressBaseMs = _positionMs.value
             _progressBaseTime = SystemClock.elapsedRealtime()
+            _progressBaseFrames = if (_pcmClock) NativeBridge.nativePcmPlayoutFrames() else -1L
         } else {
             // freeze position
             _positionMs.value = currentPositionMs()
             _progressBaseTime = 0
+            _progressBaseFrames = -1L
         }
         _updatePlaybackState()
     }

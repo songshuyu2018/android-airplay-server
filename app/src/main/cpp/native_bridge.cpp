@@ -465,6 +465,9 @@ typedef struct {
 } sps_ctx_t;
 
 static sps_ctx_t *g_sps = NULL;
+/* The PCM sink outlives the receiver: a still connected sender's player thread can
+ * write to it after a stop.  It is created once and never destroyed. */
+static PcmSink *g_pcm_sink = NULL;
 
 static void _sps_exit_reported(int status) {
     LOGI("shairport-sync reported exit %d", status);
@@ -508,6 +511,20 @@ extern "C" int airplay_android_audio_delay(long *frames) {
     return pcm_sink_delay_frames(g_sps->sink, frames);
 }
 
+/* Frames the output stream has played since it was started: the app clocks the
+ * playback position from this when the sender reports no progress. */
+extern "C"
+JNIEXPORT jlong JNICALL
+Java_io_github_jqssun_airplay_bridge_NativeBridge_nativePcmPlayoutFrames(
+        JNIEnv *env, jobject thiz) {
+    (void) env;
+    (void) thiz;
+    if (!g_pcm_sink) return -1;
+    uint64_t frames = 0;
+    if (pcm_sink_playout_frames(g_pcm_sink, &frames) != 0) return -1;
+    return (jlong) frames;
+}
+
 /* --- lifecycle --- */
 
 extern "C"
@@ -527,9 +544,8 @@ Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeStartShairport(
     /* Created once per process and never destroyed: the player thread of a still
      * connected sender can call play() after a stop, and it must not find this freed.
      * The receiver itself also runs at most once per process. */
-    static PcmSink *sharedSink = NULL;
-    if (!sharedSink) sharedSink = pcm_sink_create();
-    ctx->sink = sharedSink;
+    if (!g_pcm_sink) g_pcm_sink = pcm_sink_create();
+    ctx->sink = g_pcm_sink;
 
     const char *meta = env->GetStringUTFChars(metaPipe, NULL);
     const char *name_c = env->GetStringUTFChars(name, NULL);
