@@ -25,8 +25,11 @@ static inline int sps_android_pthread_attr_setinheritsched(pthread_attr_t *a, in
   (void) a; (void) s; return 0;
 }
 
+/* pthread_cancel()/pthread_testcancel() are emulated: the request is recorded and the
+ * target thread ends itself at its next testcancel (see android_pthread_cancel.c). */
+#include "android_start.h"
 #undef pthread_cancel
-#define pthread_cancel(t) 0
+#define pthread_cancel(t) sps_pthread_cancel(t)
 #undef pthread_setcancelstate
 #define pthread_setcancelstate(s, o) 0
 #undef pthread_setcanceltype
@@ -36,7 +39,7 @@ static inline int sps_android_pthread_attr_setinheritsched(pthread_attr_t *a, in
 
 
 #undef pthread_testcancel
-#define pthread_testcancel() ((void) 0)
+#define pthread_testcancel() sps_pthread_testcancel()
 
 /* shm_open() appears in bionic's headers from API 26; declare it so the NQPTP
  * shared-memory interface compiles on our API 24 baseline. At runtime it is

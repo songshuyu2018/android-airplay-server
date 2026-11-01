@@ -4062,10 +4062,25 @@ void rtsp_conversation_thread_cleanup_function(void *arg) {
     debug(3, "Connection %d: %s rtsp_conversation_thread_func_cleanup_function called.",
           conn->connection_number, get_category_string(conn->airplay_stream_category));
 
+#ifdef CONFIG_ANDROID
+    /* player_stop() joins the player thread, which in turn joins the audio, control and
+     * timing receivers, and all of them are parked in recv() on these sockets -- which
+     * are only closed further down in this function.  Shut them down first so those
+     * reads return, otherwise the joins never complete and the connection thread hangs. */
+    if (conn->control_socket)
+      shutdown(conn->control_socket, SHUT_RDWR);
+    if (conn->timing_socket)
+      shutdown(conn->timing_socket, SHUT_RDWR);
+    if (conn->audio_socket)
+      shutdown(conn->audio_socket, SHUT_RDWR);
+    if (conn->fd > 0)
+      shutdown(conn->fd, SHUT_RDWR);
+#endif
     if (conn->player_thread) {
       debug(4, "player stop in rtsp_conversation_thread_cleanup_function");
       player_stop(conn); // this nulls the player_thread and cancels the threads...
       activity_monitor_signify_activity(0); // inactive, and should be after command_stop()
+      debug(4, "player stop in rtsp_conversation_thread_cleanup_function is done");
     }
 
     if (conn->fd > 0) {

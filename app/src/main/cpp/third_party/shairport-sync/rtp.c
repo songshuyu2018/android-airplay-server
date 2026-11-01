@@ -603,6 +603,7 @@ void *rtp_timing_sender(void *arg) {
 
   conn->time_ping_count = 0;
   while (1) {
+    pthread_testcancel(); // bionic has no real cancellation points; this is the one
     if (conn->udp_clock_sender_is_initialised == 0) {
       request_number = 0;
       conn->udp_clock_sender_is_initialised = 1;

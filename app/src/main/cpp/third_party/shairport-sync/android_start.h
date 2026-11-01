@@ -16,6 +16,8 @@
  * exercised outside Android before going anywhere near a phone.
  */
 
+#include <pthread.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -66,6 +68,13 @@ void sps_android_note_listener_stopped(void);
 
 /* Called by main() if it ever returns (it does for -V/-h and on early errors). */
 void sps_android_note_main_exited(int status);
+
+/* --- thread cancellation (see android_pthread_cancel.c) --- */
+
+/* Records a cancellation request for `target`; it takes effect at that thread's next
+ * pthread_testcancel().  sps_android_compat.h maps pthread_cancel/testcancel here. */
+int sps_pthread_cancel(pthread_t target);
+void sps_pthread_testcancel(void);
 
 #ifdef __cplusplus
 }
