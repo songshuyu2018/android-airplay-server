@@ -302,7 +302,9 @@ void *rtp_audio_receiver(void *arg) {
   }
 
   debug(1, "Audio receiver thread \"normal\" exit -- this can't happen. Hah!");
-  pthread_cleanup_pop(0); // don't execute anything here.
+  /* Reachable on Android, where a shut-down socket ends this loop instead of a
+   * cancellation: run the cleanup handler rather than discarding it. */
+  pthread_cleanup_pop(1);
   debug(2, "Audio receiver thread exit.");
   pthread_exit(NULL);
 }
@@ -573,7 +575,7 @@ void *rtp_control_receiver(void *arg) {
     }
   }
   debug(1, "Control RTP thread \"normal\" exit -- this can't happen. Hah!");
-  pthread_cleanup_pop(0); // don't execute anything here.
+  pthread_cleanup_pop(1); // see the note in the audio receiver
   debug(2, "Control RTP thread exit.");
   pthread_exit(NULL);
 }
@@ -984,7 +986,11 @@ void *rtp_timing_receiver(void *arg) {
   }
 
   debug(1, "Timing Receiver RTP thread \"normal\" exit -- this can't happen. Hah!");
-  pthread_cleanup_pop(0); // don't execute anything here.
+  /* This handler is what cancels and joins the timing *sender*; skipping it left that
+   * thread running with a freed connection (seen on the device as
+   * "error 9 ... timing socket -1: Bad file descriptor" every 3 seconds, and as a later
+   * session that never got timing information and so never played). */
+  pthread_cleanup_pop(1);
   debug(2, "Timing Receiver RTP thread exit.");
   pthread_exit(NULL);
 }
