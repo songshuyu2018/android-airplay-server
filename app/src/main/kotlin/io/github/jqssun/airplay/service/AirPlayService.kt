@@ -1045,9 +1045,17 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             return
         }
         if (start > 0) _trackStartRtp = start
+        // Decide "same item" against the length we had *before* this line: updating the
+        // length first made every new track look like the current one, so its opening
+        // progress line was discarded as an implausible seek and both the position and
+        // the bar stayed on the previous track.
+        val sameTrack = durKnown && _durationMs.value > 0 &&
+            kotlin.math.abs(durMs - _durationMs.value) <= 1000L
         // The sender does not always know a duration; keep whatever we already have then.
-        if (durKnown && kotlin.math.abs(durMs - _durationMs.value) > 1000L) {
+        if (durKnown && !sameTrack) {
             _durationMs.value = durMs
+            // the player snapshot the UI draws was built from the old length
+            _refreshDacpPlayer()
         }
         // While parked after a pause the sender keeps emitting progress against the
         // timeline it restarted (typically a jump to ~1 s). Taking it would move the
@@ -1057,7 +1065,6 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
 
         // Degenerate progress: a rewind to zero on the same track would restart the
         // displayed time from 0:00.
-        val sameTrack = durKnown && _durationMs.value > 0 && durMs == _durationMs.value
         if (sameTrack && posMs == 0L && _positionMs.value > 2000L) return
 
         // Large jumps are usually the sender's stream-relative bookkeeping rather than a
