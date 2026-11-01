@@ -169,6 +169,8 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     @Volatile private var _lastFlushAt = 0L
     /** last "implausible" position the sender reported, pending confirmation */
     @Volatile private var _pendingSeekMs = -1L
+    /** throttles the progress log line to one per second */
+    @Volatile private var _progressLoggedAt = 0L
 
     fun currentPositionMs(): Long {
         // Prefer the position of the audio actually being rendered: the sender's
@@ -984,14 +986,39 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         if (!_playing.value) _setPlaying(true)
     }
 
+    /**
+     * The sender's progress line is `display/pos/end` in RTP frames, and those are
+     * 32-bit values that wrap: `start` in particular is computed as "stream position
+     * minus how far into the track we are", which is routinely a negative number that
+     * arrives as a huge unsigned one. Every difference therefore has to be taken
+     * modulo 2^32, the way the senders themselves do it; a plain subtraction turns a
+     * wrapped baseline into tens of hours of playback and pins the bar at the end.
+     */
+    private fun rtpDelta(a: Long, b: Long): Long = (a - b) and 0xFFFFFFFFL
+
     override fun onProgress(start: Long, curr: Long, end: Long) {
         val rate = 44100.0
-        val posMs = ((curr - start) / rate * 1000).toLong().coerceAtLeast(0)
-        val durMs = ((end - start) / rate * 1000).toLong().coerceAtLeast(0)
+        val posMs = (rtpDelta(curr, start) / rate * 1000).toLong()
+        val durMs = (rtpDelta(end, start) / rate * 1000).toLong()
+        // "end == start" means the sender does not know the duration (a track started
+        // mid-way); a wrapped difference is then a huge number, not ~0.
+        val durKnown = durMs in 1000..MAX_TRACK_MS
+        val now = SystemClock.elapsedRealtime()
+        if (now - _progressLoggedAt > 1000L) {
+            _progressLoggedAt = now
+            log("Progress: ${posMs / 1000}s of ${if (durKnown) "${durMs / 1000}s" else "?"} " +
+                "(rtp $start/$curr/$end)")
+        }
+        if (posMs < 0 || posMs > (if (durKnown) durMs + 30_000L else MAX_TRACK_MS)) {
+            // A sender that restarts its stream can report a baseline from the previous
+            // segment; keeping the running position is better than jumping to a value
+            // that cannot be inside this track.
+            Log.w(TAG, "progress outside the track: rtp $start/$curr/$end -> ${posMs}ms / ${durMs}ms")
+            return
+        }
         if (start > 0) _trackStartRtp = start
-        // The sender does not always know a duration (a track started mid-way sends
-        // end == start), so keep whatever duration we already have in that case.
-        if (durMs > 0 && kotlin.math.abs(durMs - _durationMs.value) > 1000L) {
+        // The sender does not always know a duration; keep whatever we already have then.
+        if (durKnown && kotlin.math.abs(durMs - _durationMs.value) > 1000L) {
             _durationMs.value = durMs
         }
         // While parked after a pause the sender keeps emitting progress against the
@@ -1002,7 +1029,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
 
         // Degenerate progress: a rewind to zero on the same track would restart the
         // displayed time from 0:00.
-        val sameTrack = _durationMs.value > 0 && durMs == _durationMs.value
+        val sameTrack = durKnown && _durationMs.value > 0 && durMs == _durationMs.value
         if (sameTrack && posMs == 0L && _positionMs.value > 2000L) return
 
         // Large jumps are usually the sender's stream-relative bookkeeping rather than a
@@ -1017,7 +1044,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         _pendingSeekMs = -1L
 
         _positionMs.value = posMs
-        _durationMs.value = durMs
+        if (durKnown) _durationMs.value = durMs
         _progressBaseMs = posMs
         _progressBaseTime = SystemClock.elapsedRealtime()
         _playing.value = true
@@ -1331,6 +1358,8 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         private const val CLIENT_VOL_EPS = 0.033f
         private const val CLIENT_VOL_MAX_STEPS = 32
         private const val CLIENT_VOL_TIMEOUT_MS = 800L
+        /** no track is longer than this; anything past it is a broken progress line */
+        private const val MAX_TRACK_MS = 12 * 3600_000L
         private const val CHANNEL_ID = "airplay_service"
         private const val NOTIFICATION_ID = 1
         const val ACTION_PLAY_PAUSE = "io.github.jqssun.airplay.PLAY_PAUSE"
