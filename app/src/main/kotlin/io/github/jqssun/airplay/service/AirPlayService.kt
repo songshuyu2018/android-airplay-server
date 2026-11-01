@@ -212,6 +212,8 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     private var _bindRetries = 0
     /** last time anything actually arrived from a sender (metadata, cover art, progress) */
     @Volatile private var _lastStreamActivityAt = 0L
+    /** playout position when the last connection went away, to tell a take-over from a stop */
+    @Volatile private var _positionAtTeardown = 0L
     @Volatile private var _coverArtBytes: ByteArray? = null
     private var mediaSession: MediaSessionCompat? = null
     private var mediaReceiver: BroadcastReceiver? = null
@@ -936,6 +938,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             // cover art -- audio keeps playing with an empty UI until the next track.
             // Wait for a quiet moment and only then end the session.
             _mainHandler.removeCallbacks(_endSessionRunnable)
+            _positionAtTeardown = currentPositionMs()
             _mainHandler.postDelayed(_endSessionRunnable, SESSION_END_GRACE_MS)
         }
         log("Sender disconnected (${_connectionCount.value})")
@@ -944,8 +947,11 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     /** Runs only if nothing has arrived since the last connection was torn down. */
     private val _endSessionRunnable = Runnable {
         if (_connectionCount.value != 0) return@Runnable
-        if (SystemClock.elapsedRealtime() - _lastStreamActivityAt < SESSION_END_GRACE_MS) {
-            // the sender that took over is still streaming: adopt its session instead
+        // The deciding fact is whether the listener can still hear something: a sender
+        // that took over keeps the playout clock moving, a disconnected one leaves it
+        // frozen.  Metadata alone would be a guess -- a new sender may not repeat it.
+        val stillPlaying = currentPositionMs() - _positionAtTeardown > 600L
+        if (stillPlaying || SystemClock.elapsedRealtime() - _lastStreamActivityAt < SESSION_END_GRACE_MS) {
             _connectionCount.value = 1
             log("Sender takeover: keeping the current session")
             return@Runnable
