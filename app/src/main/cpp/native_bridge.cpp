@@ -474,8 +474,14 @@ static void _sps_exit_reported(int status) {
 
 extern "C" int airplay_android_audio_config(unsigned int rate, unsigned int channels,
                                             unsigned int bytes_per_sample) {
-    if (!g_sps || !g_sps->sink) return -1;
-    return pcm_sink_start(g_sps->sink, (int) rate, (int) channels, (int) bytes_per_sample);
+    if (!g_sps || !g_sps->sink) {
+        LOGE("no PCM sink for %u Hz/%u ch -- this session will be silent", rate, channels);
+        return -1;
+    }
+    int rc = pcm_sink_start(g_sps->sink, (int) rate, (int) channels, (int) bytes_per_sample);
+    if (rc != 0) LOGE("cannot open the output at %u Hz/%u ch -- this session will be silent", rate,
+                      channels);
+    return rc;
 }
 
 extern "C" int airplay_android_audio_write(void *buf, int samples, int bytes_per_frame,
@@ -518,7 +524,12 @@ Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeStartShairport(
     sps_ctx_t *ctx = new sps_ctx_t();
     android_callbacks_init(&ctx->cb, env, callback);
     ctx->cb.audio_engine = NULL;  /* decoded PCM goes through pcm_sink instead */
-    ctx->sink = pcm_sink_create();
+    /* Created once per process and never destroyed: the player thread of a still
+     * connected sender can call play() after a stop, and it must not find this freed.
+     * The receiver itself also runs at most once per process. */
+    static PcmSink *sharedSink = NULL;
+    if (!sharedSink) sharedSink = pcm_sink_create();
+    ctx->sink = sharedSink;
 
     const char *meta = env->GetStringUTFChars(metaPipe, NULL);
     const char *name_c = env->GetStringUTFChars(name, NULL);
@@ -538,7 +549,8 @@ Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeStartShairport(
     if (rc != 0) {
         LOGE("shairport-sync failed to start: %d", rc);
         sps_metadata_stop();
-        pcm_sink_destroy(ctx->sink);
+        pcm_sink_stop(ctx->sink);  /* keep it: it is shared and immortal */
+        ctx->sink = NULL;
         android_callbacks_destroy(&ctx->cb, env);
         delete ctx;
         return JNI_FALSE;
@@ -562,10 +574,9 @@ Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeStopShairport(
     pcm_sink_stop(g_sps->sink);
     sps_android_set_exit_callback(NULL);
 
-    pcm_sink_destroy(g_sps->sink);
-    g_sps->sink = NULL;
-    android_callbacks_destroy(&g_sps->cb, env);
-    delete g_sps;
+    /* the sink and the callback context are deliberately not freed: a connection or
+     * player thread from this session may still be running (bionic cannot cancel
+     * threads), and it would call play() or a metadata callback through freed memory */
     g_sps = NULL;
     LOGI("shairport-sync stopped");
 }

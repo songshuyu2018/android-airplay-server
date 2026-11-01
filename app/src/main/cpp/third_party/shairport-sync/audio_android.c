@@ -21,7 +21,6 @@ extern int airplay_android_audio_config(unsigned int rate, unsigned int channels
                                         unsigned int bytes_per_sample);
 extern void airplay_android_audio_stop(void);
 extern void airplay_android_audio_flush(void);
-extern int airplay_android_audio_delay(long *frames);
 
 static unsigned int bytes_per_frame = 0;
 
@@ -69,14 +68,6 @@ static void stop(void) { airplay_android_audio_stop(); }
 
 static void flush(void) { airplay_android_audio_flush(); }
 
-static int delay(long *the_delay) {
-  if (bytes_per_frame == 0) {
-    *the_delay = 0;
-    return -1;
-  }
-  return airplay_android_audio_delay(the_delay);
-}
-
 audio_output audio_android = {.name = "android",
                               .help = NULL,
                               .init = &init,
@@ -88,7 +79,17 @@ audio_output audio_android = {.name = "android",
                               .stop = &stop,
                               .is_running = NULL,
                               .flush = &flush,
-                              .delay = &delay,
+                              /* delay deliberately not implemented.  With a delay() shairport-sync
+                               * only leaves its buffering state once the reported device delay
+                               * converges on its target (player.c: the `if (config.output->delay)`
+                               * branch never clears conn->ab_buffering on our callbacks; the
+                               * `else` branch does).  A sink that cannot report a real device
+                               * clock -- which Oboe's getTimestamp() only sometimes can -- is
+                               * better off letting shairport pace itself, exactly as the pipe and
+                               * stdout backends do.  Measured: with delay() the player sent 11 s
+                               * of dither-only silence and no audio at all; without it the same
+                               * session delivers real samples. */
+                              .delay = NULL,
                               .stats = NULL,
                               .volume = NULL,
                               .parameters = NULL,

@@ -49,6 +49,9 @@ JNIEnv *attachEnv(JavaVM *vm) {
     if (vm->GetEnv((void **)&env, JNI_VERSION_1_6) == JNI_EDETACHED) {
         if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) return nullptr;
     }
+    /* Every call, not just the first: a Kotlin callback that throws (BitmapFactory
+     * running out of memory on a cover art, say) leaves an exception pending, and the
+     * next JNI call with one pending aborts the process. */
     if (env && env->ExceptionCheck()) {
         env->ExceptionDescribe();
         env->ExceptionClear();
@@ -92,6 +95,7 @@ void onDacp(void *opaque, const char *dacpId, const char *activeRemote) {
     auto *ctx = static_cast<android_callback_ctx_t *>(opaque);
     JNIEnv *env = attachEnv(ctx->jvm);
     if (!env || !ctx->on_dacp_id) return;
+    if (dacpId == nullptr || activeRemote == nullptr) return;
     jstring id = env->NewStringUTF(dacpId);
     jstring remote = env->NewStringUTF(activeRemote);
     if (id && remote) env->CallVoidMethod(ctx->callback_obj, ctx->on_dacp_id, id, remote);
@@ -169,6 +173,9 @@ void *readerThread(void *arg) {
     r->fd = -1;
     sps_metadata_parser_free(r->parser);
     r->parser = nullptr;
+    /* leave the JVM clean: a thread that returns still attached leaves a dangling
+     * JavaThread behind */
+    r->ctx->jvm->DetachCurrentThread();
     LOGI("metadata reader stopped");
     return nullptr;
 }

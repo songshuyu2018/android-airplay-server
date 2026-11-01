@@ -40,6 +40,12 @@ constexpr int kBufferSeconds = 3;
 constexpr int kWriteTimeoutMs = 500;
 constexpr int kWritePollUs = 2000;
 
+int64_t nowMs() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
 struct Ring {
     std::vector<int16_t> data;
     std::atomic<uint64_t> head{0};  // samples written
@@ -109,6 +115,9 @@ struct PcmSink {
     oboe::DataCallbackResult onAudioReady(void *audioData, int32_t numFrames);
     void onStreamError();
     int startLocked(int sampleRate, int channels, int bytesPerSample);
+
+    std::atomic<bool> closing{false};  // torn down on purpose: no reopen
+    int64_t lastStatsAtMs = 0;
 };
 
 namespace {
@@ -147,9 +156,12 @@ oboe::DataCallbackResult PcmSink::onAudioReady(void *audioData, int32_t numFrame
 }
 
 void PcmSink::onStreamError() {
-    // device change (headset plugged in, route switched): the stream is gone, rebuild it
+    // device change (headset plugged in, route switched): the stream is gone, rebuild it.
+    // `closing` is checked before taking the lock because close() below dispatches this
+    // callback on the same thread that holds it.
+    if (closing.load(std::memory_order_relaxed)) return;
     std::lock_guard<std::mutex> lk(control);
-    if (!playing.load(std::memory_order_relaxed)) return;
+    if (closing.load(std::memory_order_relaxed) || !playing.load(std::memory_order_relaxed)) return;
     LOGE("reopening the output after a device error");
     if (stream) {
         stream->close();
@@ -182,10 +194,12 @@ int PcmSink::startLocked(int sample_rate, int channels, int bytes_per_sample) {
         return 0;
 
     if (stream) {
+        closing.store(true);
         playing.store(false);
         stream->stop();
         stream->close();
         stream.reset();
+        closing.store(false);
     }
 
     this->sampleRate = sample_rate;
@@ -243,6 +257,7 @@ int PcmSink::startLocked(int sample_rate, int channels, int bytes_per_sample) {
 
 void pcm_sink_stop(PcmSink *sink) {
     if (!sink) return;
+    sink->closing.store(true);  // veto the reopen path before anything is closed
     std::lock_guard<std::mutex> lk(sink->control);
     sink->playing.store(false);
     if (sink->stream) {
@@ -265,7 +280,17 @@ void pcm_sink_flush(PcmSink *sink) {
 
 int pcm_sink_write(PcmSink *sink, const void *buf, int frames) {
     if (!sink || !buf || frames <= 0) return 0;
-    if (!sink->playing.load(std::memory_order_relaxed)) return frames;  // swallowed, not stalled
+    /* Not playing means either "between sessions" or "the output failed to open".
+     * Returning the frame count keeps shairport's accounting happy, but log it: this is
+     * the difference between silence and sound on a device, so it must be visible. */
+    if (!sink->playing.load(std::memory_order_relaxed)) {
+        static int warned;
+        if (!warned) {
+            warned = 1;
+            LOGE("PCM written while the output is stopped -- audio will be silent");
+        }
+        return frames;
+    }
 
     const int channels = sink->channels;
     const int bytesPerSample = sink->bytesPerSample;
@@ -314,6 +339,19 @@ int pcm_sink_write(PcmSink *sink, const void *buf, int frames) {
     if (accepted < frames)
         LOGW("dropped %d of %d frames -- output buffer stayed full", frames - accepted, frames);
     sink->framesWritten.fetch_add((uint64_t)accepted, std::memory_order_relaxed);
+
+    /* once in a while say how much actually made it through: the difference between
+     * "nothing arrives", "arrives but the device never takes it" and "fine" is not
+     * visible anywhere else on a device */
+    const int64_t now = nowMs();
+    if (now - sink->lastStatsAtMs >= 5000) {
+        sink->lastStatsAtMs = now;
+        const size_t fill = sink->ring.availableToRead() / (size_t)channels;
+        LOGI("PCM in: %llu frames written, %llu fed to the device, %zu queued, %llu underruns",
+             (unsigned long long)sink->framesWritten.load(),
+             (unsigned long long)sink->framesFed.load(), fill,
+             (unsigned long long)sink->underruns.load());
+    }
     return accepted;
 }
 

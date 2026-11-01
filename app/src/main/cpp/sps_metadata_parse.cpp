@@ -84,7 +84,7 @@ int64_t nowMs() {
 struct SpsMetadataParser {
     sps_metadata_sink_t sink;
 
-    char pipe[kPipeBufferSize];
+    char pipe[kPipeBufferSize + 1];
     size_t pipeLen;
 
     char item[kItemBufferSize];
@@ -92,7 +92,7 @@ struct SpsMetadataParser {
 
     unsigned char dmap[kDmapBufferSize];
     size_t dmapLen;
-    int64_t dmapFirstAtMs;
+    int64_t dmapLastAtMs; /* last item appended: a burst is only over once it goes quiet */
 
     char dacpId[128];
     char activeRemote[128];
@@ -116,14 +116,14 @@ void SpsMetadataParser::appendDmap(uint32_t code, const unsigned char *payload, 
     p[7] = (unsigned char)len;
     if (len) memcpy(p + 8, payload, len);
     dmapLen += 8 + len;
-    if (dmapFirstAtMs == 0) dmapFirstAtMs = nowMs();
+    dmapLastAtMs = nowMs();
 }
 
 void SpsMetadataParser::flushDmap() {
     if (dmapLen == 0) return;
     if (sink.metadata) sink.metadata(sink.ctx, dmap, dmapLen);
     dmapLen = 0;
-    dmapFirstAtMs = 0;
+    dmapLastAtMs = 0;
 }
 
 void SpsMetadataParser::emitDacpIfComplete() {
@@ -221,7 +221,7 @@ SpsMetadataParser *sps_metadata_parser_new(const sps_metadata_sink_t *sink) {
     memset(parser->activeRemote, 0, sizeof(parser->activeRemote));
     parser->pipeLen = 0;
     parser->dmapLen = 0;
-    parser->dmapFirstAtMs = 0;
+    parser->dmapLastAtMs = 0;
     if (sink) parser->sink = *sink;
     else memset(&parser->sink, 0, sizeof(parser->sink));
     return parser;
@@ -232,21 +232,24 @@ void sps_metadata_parser_feed(SpsMetadataParser *parser, const char *bytes, size
 
     size_t offset = 0;
     while (offset < len) {
-        if (parser->pipeLen == sizeof(parser->pipe)) {
+        if (parser->pipeLen >= kPipeBufferSize) {
             // a frame bigger than the buffer: drop what we have and start again
             parser->pipeLen = 0;
         }
-        const size_t room = sizeof(parser->pipe) - parser->pipeLen;
+        const size_t room = kPipeBufferSize - parser->pipeLen;
         const size_t chunk = (len - offset) < room ? (len - offset) : room;
         memcpy(parser->pipe + parser->pipeLen, bytes + offset, chunk);
         parser->pipeLen += chunk;
         offset += chunk;
+        // strstr() below needs a terminator, and the bytes past pipeLen are stale:
+        // without this a search for "</item>" ran into the previous item's tail
+        parser->pipe[parser->pipeLen] = 0;
 
         // consume every complete <item>...</item>
         size_t consumed = 0;
         for (;;) {
             const char *start = parser->pipe + consumed;
-            if (parser->pipeLen - consumed < 6) break;
+            if (parser->pipeLen <= consumed || parser->pipeLen - consumed < 6) break;
             const char *itemStart = strstr(start, "<item>");
             if (!itemStart) {
                 consumed = parser->pipeLen;
@@ -266,16 +269,18 @@ void sps_metadata_parser_feed(SpsMetadataParser *parser, const char *bytes, size
             }
             consumed = (size_t)(itemEnd + 7 - parser->pipe);
         }
+        if (consumed > parser->pipeLen) consumed = parser->pipeLen; /* cannot happen now */
         if (consumed > 0) {
             memmove(parser->pipe, parser->pipe + consumed, parser->pipeLen - consumed);
             parser->pipeLen -= consumed;
+            parser->pipe[parser->pipeLen] = 0;
         }
     }
 }
 
 void sps_metadata_parser_tick(SpsMetadataParser *parser) {
     if (!parser) return;
-    if (parser->dmapLen > 0 && nowMs() - parser->dmapFirstAtMs > kBurstFlushMs) parser->flushDmap();
+    if (parser->dmapLen > 0 && nowMs() - parser->dmapLastAtMs > kBurstFlushMs) parser->flushDmap();
 }
 
 void sps_metadata_parser_free(SpsMetadataParser *parser) {

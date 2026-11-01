@@ -872,13 +872,25 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     }
 
     override fun onConnectionInit() {
+        // shairport-sync reports "active again" after a pause, so this can arrive while a
+        // sender is still connected: only an actual 0 -> 1 transition is a new sender
         val firstConnection = _connectionCount.value == 0
-        _connectionCount.value++
-        log("Sender connected (${_connectionCount.value})")
-        if (firstConnection && shouldLaunchOnConnect()) launchMainActivity()
+        if (firstConnection) {
+            _connectionCount.value = 1
+            log("Sender connected")
+            if (prefs[Prefs.USE_SHAIRPORT]) _setAudioOnly(true)
+            if (shouldLaunchOnConnect()) launchMainActivity()
+        }
     }
 
     override fun onConnectionDestroy() {
+        // shairport-sync's "inactive" only means the sender went quiet for its activity
+        // timeout: keep the track, cover art and audio-only view so a pause does not
+        // blank the UI and leave it blank when playback resumes
+        if (prefs[Prefs.USE_SHAIRPORT]) {
+            log("Sender went quiet")
+            return
+        }
         _connectionCount.value = (_connectionCount.value - 1).coerceAtLeast(0)
         if (_connectionCount.value == 0) {
             // clients may drop without POST /stop; must run before the poll-state reset

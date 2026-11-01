@@ -324,7 +324,6 @@ int sps_android_start(const char *name, const char *meta_pipe, const char *log_p
   main_exited = 0;
   cleaned_up = 0;
   running = 1;
-  starts_so_far++;
 
   redirect_output();
 
@@ -342,9 +341,12 @@ int sps_android_start(const char *name, const char *meta_pipe, const char *log_p
 
   if (err != 0) {
     running = 0;
+    run_number--; /* nothing ran, so a retry must still be allowed */
     SPS_ERR("cannot create the receiver thread: %s", strerror(err));
     return -1;
   }
+  /* only now has a receiver really run in this process */
+  starts_so_far++;
   return 0;
 }
 
