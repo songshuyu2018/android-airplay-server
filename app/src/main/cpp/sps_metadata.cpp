@@ -119,6 +119,10 @@ void onPlayback(void *opaque, int state) {
         case 3:  // the session ended
             if (ctx->on_conn_destroy) env->CallVoidMethod(ctx->callback_obj, ctx->on_conn_destroy);
             break;
+        case 4:  // the receiver's player thread stopped: nothing is being played
+            if (ctx->on_audio_teardown)
+                env->CallVoidMethod(ctx->callback_obj, ctx->on_audio_teardown);
+            break;
         default:  // paused
             if (ctx->on_audio_flush)
                 env->CallVoidMethod(ctx->callback_obj, ctx->on_audio_flush);

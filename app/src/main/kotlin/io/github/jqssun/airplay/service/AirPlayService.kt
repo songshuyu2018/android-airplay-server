@@ -208,6 +208,8 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     lateinit var dacpPlayer: DacpPlayer
         private set
     private val _mainHandler = Handler(Looper.getMainLooper())
+    /** start attempts spent waiting for a just-released port (engine switch, restart) */
+    private var _bindRetries = 0
     @Volatile private var _coverArtBytes: ByteArray? = null
     private var mediaSession: MediaSessionCompat? = null
     private var mediaReceiver: BroadcastReceiver? = null
@@ -484,13 +486,27 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         NativeBridge.nativeSetDisplaySize(nativeHandle, w, h, maxFps)
 
         val requestedPort = prefs[Prefs.SERVER_PORT]
+        // Switching the receiver engine at runtime tears the previous one down and starts
+        // this one immediately, but its listening socket is closed by a thread that is a
+        // few milliseconds behind: bind() then fails with EADDRINUSE and the app reports
+        // "Failed to start" until the process is restarted.  Give the port a moment.
         val port = NativeBridge.nativeStart(nativeHandle, requestedPort)
         if (port < 0) {
+            if (_bindRetries < SERVER_BIND_RETRIES) {
+                _bindRetries++
+                log("Port $requestedPort is still busy, retrying ($_bindRetries/$SERVER_BIND_RETRIES)")
+                _mainHandler.postDelayed(
+                    { _startServer(ensureServiceStarted = false) }, SERVER_BIND_RETRY_MS
+                )
+                return
+            }
+            _bindRetries = 0
             log("Failed to start on port $requestedPort")
             _failStart()
             return
         }
 
+        _bindRetries = 0
         // register mdns services
         val raopTxt = NativeBridge.nativeGetRaopTxtRecords(nativeHandle) ?: emptyMap()
         val airplayTxt = NativeBridge.nativeGetAirplayTxtRecords(nativeHandle) ?: emptyMap()
@@ -1409,6 +1425,9 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         const val VIDEO_POLL_PENDING_TIMEOUT_MS = 3_000L
 
         private const val AUDIO_CONFIG_DEBOUNCE_MS = 500L
+        /** a receiver that was just stopped can still hold the port for a moment */
+        private const val SERVER_BIND_RETRIES = 6
+        private const val SERVER_BIND_RETRY_MS = 250L
         private const val SERVER_RESTART_DEBOUNCE_MS = 500L
 
         // airplay volume is linear in dB along sender slider

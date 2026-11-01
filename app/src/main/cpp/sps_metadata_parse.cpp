@@ -173,6 +173,12 @@ void SpsMetadataParser::handleItem() {
             case fourcc('p', 'a', 'u', 's'):
                 if (sink.playback) sink.playback(sink.ctx, 0);
                 break;
+            /* player thread ended: the session is over (AirPlay 2 raises this on teardown,
+             * AirPlay 1 whenever the sender stops).  Without it the app kept showing a
+             * playing track after the sender had gone. */
+            case fourcc('p', 'e', 'n', 'd'):
+                if (sink.playback) sink.playback(sink.ctx, 4);
+                break;
             case fourcc('p', 'r', 'e', 's'):
             case fourcc('p', 'b', 'e', 'g'):
                 if (sink.playback) sink.playback(sink.ctx, 1);
