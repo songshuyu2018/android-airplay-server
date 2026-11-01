@@ -66,6 +66,9 @@ int sps_android_stop_requested(void);
 /* Called by the RTSP listening loop when it has left. */
 void sps_android_note_listener_stopped(void);
 
+/* Called by the RTSP listening loop once its sockets are bound. */
+void sps_android_note_listener_started(void);
+
 /* Called by main() if it ever returns (it does for -V/-h and on early errors). */
 void sps_android_note_main_exited(int status);
 

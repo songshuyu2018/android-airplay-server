@@ -83,6 +83,7 @@ static volatile unsigned run_number;    // incremented by every start
 static volatile unsigned stopped_run;   // highest run that has been asked to stop
 static volatile int running;            // a run is active
 static volatile int listener_stopped;   // the current run's RTSP loop has left
+static volatile int listener_started;   // the current run is listening
 static volatile int main_exited;        // the current run's main() has returned
 static volatile int cleaned_up;         // mdns_unregister() done for the current run
 static int starts_so_far;
@@ -110,6 +111,11 @@ int sps_android_stop_requested(void) { return stopped_run != 0 && stopped_run >=
 void sps_android_note_listener_stopped(void) {
   listener_stopped = 1;
   SPS_LOG("RTSP listening loop has stopped");
+}
+
+void sps_android_note_listener_started(void) {
+  listener_started = 1;
+  SPS_LOG("RTSP listening loop is up");
 }
 
 /* Send the daemon's stdout/stderr to a file so the app can show and share it.
@@ -321,6 +327,7 @@ int sps_android_start(const char *name, const char *meta_pipe, const char *log_p
 
   run_number++;
   listener_stopped = 0;
+  listener_started = 0;
   main_exited = 0;
   cleaned_up = 0;
   running = 1;
@@ -347,6 +354,16 @@ int sps_android_start(const char *name, const char *meta_pipe, const char *log_p
   }
   /* only now has a receiver really run in this process */
   starts_so_far++;
+
+  /* Wait for the listener before reporting success: a bind failure (port still held by
+   * the previous instance, say) happens on the receiver's thread a few milliseconds
+   * later, and the app must not claim it is running when it is not. */
+  for (int waited = 0; waited < 150 && !listener_started && running; waited++)
+    usleep(10000);
+  if (!listener_started) {
+    SPS_ERR("the receiver did not start listening -- see the log above");
+    return -1;
+  }
   return 0;
 }
 

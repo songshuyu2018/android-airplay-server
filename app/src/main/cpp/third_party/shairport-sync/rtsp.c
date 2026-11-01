@@ -4527,6 +4527,9 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
   freeaddrinfo(info);
 
   if (nsock) {
+#ifdef CONFIG_ANDROID
+    sps_android_note_listener_started(); // the embedding app waits for this
+#endif
     int maxfd = -1;
     fd_set fds;
     FD_ZERO(&fds);
