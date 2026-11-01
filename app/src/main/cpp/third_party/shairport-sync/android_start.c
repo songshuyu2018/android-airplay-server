@@ -253,6 +253,12 @@ static void *_sps_thread(void *arg) {
   argv[argc++] = SPS_SERVICE_TYPE;
   argv[argc++] = "--port";
   argv[argc++] = port_text;
+  /* AirPlay senders hold their session while paused, and shairport-sync's default
+   * (allow_session_interruption = no) then refuses a second sender -- an iPhone
+   * could not take over from a paused Music Assistant. "-t 0" clears the session
+   * timeout and lets a new sender interrupt the idle one. */
+  argv[argc++] = "-t";
+  argv[argc++] = "0";
   if (metadata_pipe[0] != '\0') {
     argv[argc++] = "--metadata-pipename";
     argv[argc++] = metadata_pipe;
