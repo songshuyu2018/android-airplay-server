@@ -40,6 +40,9 @@ static inline int sps_android_pthread_attr_setinheritsched(pthread_attr_t *a, in
 
 #undef pthread_testcancel
 #define pthread_testcancel() sps_pthread_testcancel()
+/* a joined thread's id can be reused, so the recorded cancellation must go with it */
+#undef pthread_join
+#define pthread_join(t, r) sps_pthread_join((t), (r))
 
 /* shm_open() appears in bionic's headers from API 26; declare it so the NQPTP
  * shared-memory interface compiles on our API 24 baseline. At runtime it is

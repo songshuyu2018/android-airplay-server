@@ -20,6 +20,10 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+
+/* this file provides the real join, so it must not be redirected to its own wrapper */
+#undef pthread_join
 
 #include "android_start.h"
 
@@ -39,9 +43,23 @@
 static pthread_mutex_t cancel_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t cancel_pending[SPS_CANCEL_SLOTS];
 static int cancel_used[SPS_CANCEL_SLOTS];
+static int64_t cancel_at_ms[SPS_CANCEL_SLOTS];
 static int cancel_next;
 
+/* A recorded pthread_t is only meaningful while that thread lives; bionic reuses thread
+ * ids quickly, and a stale entry making a brand-new thread exit at its first
+ * testcancel() is exactly how a second session lost its timing thread.  Entries are
+ * dropped when their thread is joined, and expire on their own after this long. */
+#define SPS_CANCEL_TTL_MS 10000
+
+static int64_t now_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
 int sps_pthread_cancel(pthread_t target) {
+  const int64_t now = now_ms();
   pthread_mutex_lock(&cancel_lock);
   int slot = -1;
   for (int i = 0; i < SPS_CANCEL_SLOTS; i++) {
@@ -65,16 +83,34 @@ int sps_pthread_cancel(pthread_t target) {
   }
   cancel_pending[slot] = target;
   cancel_used[slot] = 1;
+  cancel_at_ms[slot] = now;
   pthread_mutex_unlock(&cancel_lock);
   return 0;
 }
 
+void sps_pthread_cancel_forget(pthread_t target) {
+  pthread_mutex_lock(&cancel_lock);
+  for (int i = 0; i < SPS_CANCEL_SLOTS; i++)
+    if (cancel_used[i] && pthread_equal(cancel_pending[i], target)) cancel_used[i] = 0;
+  pthread_mutex_unlock(&cancel_lock);
+}
+
+int sps_pthread_join(pthread_t thread, void **retval) {
+  int rc = pthread_join(thread, retval);
+  /* the thread is gone, its id is free for reuse: drop any cancel recorded for it */
+  sps_pthread_cancel_forget(thread);
+  return rc;
+}
+
 void sps_pthread_testcancel(void) {
   const pthread_t self = pthread_self();
+  const int64_t now = now_ms();
   int pending = 0;
 
   pthread_mutex_lock(&cancel_lock);
   for (int i = 0; i < SPS_CANCEL_SLOTS; i++) {
+    if (cancel_used[i] && (now - cancel_at_ms[i]) > SPS_CANCEL_TTL_MS)
+      cancel_used[i] = 0; /* stale: the thread it was meant for never checked */
     if (cancel_used[i] && pthread_equal(cancel_pending[i], self)) {
       cancel_used[i] = 0;
       pending = 1;

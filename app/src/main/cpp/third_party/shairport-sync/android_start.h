@@ -78,6 +78,9 @@ void sps_android_note_main_exited(int status);
  * pthread_testcancel().  sps_android_compat.h maps pthread_cancel/testcancel here. */
 int sps_pthread_cancel(pthread_t target);
 void sps_pthread_testcancel(void);
+/* join, then drop any cancellation recorded for that thread id */
+int sps_pthread_join(pthread_t thread, void **retval);
+void sps_pthread_cancel_forget(pthread_t target);
 
 #ifdef __cplusplus
 }
