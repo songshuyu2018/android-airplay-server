@@ -1206,6 +1206,15 @@ static int create_recv_sock() {
     log_message(LOG_ERR, "recv setsockopt(SO_REUSEADDR): %m");
     return r;
   }
+#ifdef SO_REUSEPORT
+  /* Android hands port 5353 to whoever asks for it cooperatively: the system
+   * responder and other apps set both options, and without SO_REUSEPORT this bind
+   * fails on those devices (multicast and unicast mDNS simply stop working). */
+  if ((r = setsockopt(sd, SOL_SOCKET, SO_REUSEPORT, (char *)&on, sizeof(on))) < 0) {
+    log_message(LOG_ERR, "recv setsockopt(SO_REUSEPORT): %m");
+    return r;
+  }
+#endif
 
   /* bind to an address */
   struct sockaddr_in serveraddr;

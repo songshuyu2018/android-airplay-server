@@ -87,6 +87,9 @@ static volatile int main_exited;        // the current run's main() has returned
 static volatile int cleaned_up;         // mdns_unregister() done for the current run
 static int starts_so_far;
 
+static int pipe_fds[2] = {-1, -1};
+static int tee_fd = -1; /* read end of the stdout/stderr pipe */
+
 static int port_number;
 static int verbosity_level;
 static char service_name[160];
@@ -109,20 +112,96 @@ void sps_android_note_listener_stopped(void) {
   SPS_LOG("RTSP listening loop has stopped");
 }
 
-/* Send the daemon's stdout/stderr to a file so the app can show and share it. */
+/* Send the daemon's stdout/stderr to a file so the app can show and share it.
+ *
+ * On Android they are also mirrored into logcat under the "shairport" tag: a release
+ * build is not debuggable, so `adb shell run-as` cannot read the file, and a logcat
+ * capture is the only log a user can hand over.  The mirroring runs on a thread that
+ * copies from a pipe, so neither destination can stall the other. */
+static int logcat_line(const char *line) {
+#ifdef __ANDROID__
+  return __android_log_write(ANDROID_LOG_INFO, "shairport", line);
+#else
+  (void)line;
+  return 0;
+#endif
+}
+
+static void *tee_thread(void *arg) {
+  const int log_fd = (int)(intptr_t)arg;
+  char buffer[2048];
+  char line[1024];
+  size_t line_len = 0;
+
+  for (;;) {
+    const ssize_t n = read(tee_fd, buffer, sizeof(buffer));
+    if (n <= 0) {
+      if (n < 0 && errno == EINTR)
+        continue;
+      break;
+    }
+    if (log_fd >= 0) {
+      ssize_t written = 0;
+      while (written < n) {
+        const ssize_t w = write(log_fd, buffer + written, (size_t)(n - written));
+        if (w <= 0) {
+          if (w < 0 && errno == EINTR)
+            continue;
+          break;
+        }
+        written += w;
+      }
+    }
+    /* logcat wants whole lines; shairport writes one message per call, but a write
+     * can still carry several of them or end mid-line */
+    for (ssize_t i = 0; i < n; i++) {
+      if (buffer[i] == '\n') {
+        line[line_len] = 0;
+        if (line_len > 0)
+          logcat_line(line);
+        line_len = 0;
+      } else if (line_len < sizeof(line) - 1) {
+        line[line_len++] = buffer[i];
+      }
+    }
+  }
+  return NULL;
+}
+
 static void redirect_output(void) {
   if (log_file_path[0] == '\0')
     return;
-  int fd = open(log_file_path, O_WRONLY | O_CREAT | O_APPEND, 0600);
-  if (fd < 0) {
+
+  int log_fd = open(log_file_path, O_WRONLY | O_CREAT | O_APPEND, 0600);
+  if (log_fd < 0) {
     SPS_ERR("cannot open log file \"%s\": %s", log_file_path, strerror(errno));
     return;
   }
-  dup2(fd, STDOUT_FILENO);
-  dup2(fd, STDERR_FILENO);
-  close(fd);
+
+  if (pipe(pipe_fds) != 0) {
+    /* no pipe: the file alone is still better than nothing */
+    SPS_ERR("cannot create the log pipe: %s", strerror(errno));
+    dup2(log_fd, STDOUT_FILENO);
+    dup2(log_fd, STDERR_FILENO);
+    close(log_fd);
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    return;
+  }
+
+  tee_fd = pipe_fds[0];
+  dup2(pipe_fds[1], STDOUT_FILENO);
+  dup2(pipe_fds[1], STDERR_FILENO);
+  close(pipe_fds[1]);
   /* stderr is unbuffered already; keep stdout line buffered so the two interleave */
   setvbuf(stdout, NULL, _IOLBF, 0);
+
+  pthread_t thread;
+  if (pthread_create(&thread, NULL, tee_thread, (void *)(intptr_t)log_fd) == 0) {
+    pthread_detach(thread);
+  } else {
+    close(log_fd);
+    tee_fd = -1;
+  }
 }
 
 /* select() in the listening loop has a 60 s timeout; a connection to our own port
