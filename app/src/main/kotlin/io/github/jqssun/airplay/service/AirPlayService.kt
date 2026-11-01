@@ -210,6 +210,8 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     private val _mainHandler = Handler(Looper.getMainLooper())
     /** start attempts spent waiting for a just-released port (engine switch, restart) */
     private var _bindRetries = 0
+    /** last time anything actually arrived from a sender (metadata, cover art, progress) */
+    @Volatile private var _lastStreamActivityAt = 0L
     @Volatile private var _coverArtBytes: ByteArray? = null
     private var mediaSession: MediaSessionCompat? = null
     private var mediaReceiver: BroadcastReceiver? = null
@@ -908,6 +910,8 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         // shairport-sync reports "active again" after a pause, so this can arrive while a
         // sender is still connected: only an actual 0 -> 1 transition is a new sender
         val firstConnection = _connectionCount.value == 0
+        _mainHandler.removeCallbacks(_endSessionRunnable)
+        _lastStreamActivityAt = SystemClock.elapsedRealtime()
         if (firstConnection) {
             _connectionCount.value = 1
             log("Sender connected")
@@ -926,6 +930,31 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         }
         _connectionCount.value = (_connectionCount.value - 1).coerceAtLeast(0)
         if (_connectionCount.value == 0) {
+            // A take-over is ordered the other way round: the new sender is announced
+            // (and has usually sent its metadata already) before the old connection is
+            // torn down, so clearing the session here wipes the *new* sender's track and
+            // cover art -- audio keeps playing with an empty UI until the next track.
+            // Wait for a quiet moment and only then end the session.
+            _mainHandler.removeCallbacks(_endSessionRunnable)
+            _mainHandler.postDelayed(_endSessionRunnable, SESSION_END_GRACE_MS)
+        }
+        log("Sender disconnected (${_connectionCount.value})")
+    }
+
+    /** Runs only if nothing has arrived since the last connection was torn down. */
+    private val _endSessionRunnable = Runnable {
+        if (_connectionCount.value != 0) return@Runnable
+        if (SystemClock.elapsedRealtime() - _lastStreamActivityAt < SESSION_END_GRACE_MS) {
+            // the sender that took over is still streaming: adopt its session instead
+            _connectionCount.value = 1
+            log("Sender takeover: keeping the current session")
+            return@Runnable
+        }
+        endSession()
+    }
+
+    private fun endSession() {
+        run {
             // clients may drop without POST /stop; must run before the poll-state reset
             _endVideoPlayback("AirPlay Video stopped (disconnect)")
             // last client gone: release audio output devices to save power
@@ -951,7 +980,6 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             _refreshDacpPlayer()
             _updateMediaNotification()
         }
-        log("Sender disconnected (${_connectionCount.value})")
     }
 
     override fun onConnectionReset(reason: Int) {
@@ -966,6 +994,8 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     }
 
     override fun onMetadata(data: ByteArray) {
+        _lastStreamActivityAt = SystemClock.elapsedRealtime()
+        _mainHandler.removeCallbacks(_endSessionRunnable)
         val map = DmapParser.parse(data)
         val info = TrackInfo.fromDmap(map, _trackInfo.value.coverArt)
         val previous = _trackInfo.value
@@ -990,6 +1020,8 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     }
 
     override fun onCoverArt(data: ByteArray) {
+        _lastStreamActivityAt = SystemClock.elapsedRealtime()
+        _mainHandler.removeCallbacks(_endSessionRunnable)
         val bmp = BitmapFactory.decodeByteArray(data, 0, data.size) ?: return
         _coverArtBytes = data
         _trackInfo.value = _trackInfo.value.copy(coverArt = bmp)
@@ -1041,6 +1073,8 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     private fun rtpDelta(a: Long, b: Long): Long = (a - b) and 0xFFFFFFFFL
 
     override fun onProgress(start: Long, curr: Long, end: Long) {
+        _lastStreamActivityAt = SystemClock.elapsedRealtime()
+        _mainHandler.removeCallbacks(_endSessionRunnable)
         val rate = 44100.0
         val posMs = (rtpDelta(curr, start) / rate * 1000).toLong()
         val durMs = (rtpDelta(end, start) / rate * 1000).toLong()
@@ -1427,6 +1461,8 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         private const val AUDIO_CONFIG_DEBOUNCE_MS = 500L
         /** a receiver that was just stopped can still hold the port for a moment */
         private const val SERVER_BIND_RETRIES = 6
+        /** how long a torn-down connection is given before its session state is dropped */
+        private const val SESSION_END_GRACE_MS = 3000L
         private const val SERVER_BIND_RETRY_MS = 250L
         private const val SERVER_RESTART_DEBOUNCE_MS = 500L
 
