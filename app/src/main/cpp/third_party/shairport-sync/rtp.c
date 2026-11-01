@@ -199,6 +199,8 @@ void *rtp_audio_receiver(void *arg) {
   ssize_t nread;
   while (1) {
     nread = recv(conn->audio_socket, packet, sizeof(packet), 0);
+    if (nread == 0)
+      break; // socket shut down for teardown: this thread cannot be cancelled, so leave
 
     uint64_t local_time_now_ns = get_absolute_time_in_ns();
     if (time_of_previous_packet_ns) {
@@ -323,7 +325,9 @@ void *rtp_control_receiver(void *arg) {
   ssize_t nread;
   while (1) {
     nread = recv(conn->control_socket, packet, sizeof(packet), 0);
-    if (nread >= 0) {
+    if (nread == 0)
+      break; // socket shut down for teardown: this thread cannot be cancelled, so leave
+    if (nread > 0) {
       if ((config.diagnostic_drop_packet_fraction == 0.0) ||
           (drand48() > config.diagnostic_drop_packet_fraction)) {
 
@@ -746,6 +750,8 @@ void *rtp_timing_receiver(void *arg) {
 
   while (1) {
     nread = recv(conn->timing_socket, packet, sizeof(packet), 0);
+    if (nread == 0)
+      break; // socket shut down for teardown: this thread cannot be cancelled, so leave
     if (conn->udp_clock_is_initialised == 0) {
       debug(2, "AP1 clock receiver thread: initialised.");
       local_to_remote_time_jitter = 0;
