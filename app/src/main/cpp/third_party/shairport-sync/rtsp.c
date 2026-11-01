@@ -198,6 +198,15 @@ void cancel_all_RTSP_threads(airplay_stream_c stream_category, int except_this_o
         (conns[i]->connection_number != except_this_one) &&
         ((conns[i]->airplay_stream_category == stream_category) ||
          (stream_category == unspecified_stream_category))) {
+#ifdef CONFIG_ANDROID
+      /* pthread_cancel() is a no-op here: shut the socket down so the thread's blocking
+       * read returns and the join below does not wait for the receive timeout */
+      if (conns[i]->fd > 0) {
+        debug(2, "Connection %d: shutting down its socket so the thread can exit.",
+              conns[i]->connection_number);
+        shutdown(conns[i]->fd, SHUT_RDWR);
+      }
+#endif
       pthread_cancel(conns[i]->thread);
 #ifdef CONFIG_AIRPLAY_2
       debug(2, "Connection %d from \"%s\": %s cancelled.", conns[i]->connection_number,
@@ -268,6 +277,17 @@ int terminate_conn(int connection_number) {
   int i = 0;
   while ((i < nconns) && (found == 0)) {
     if ((conns[i] != NULL) && (conns[i]->connection_number == connection_number)) {
+#ifdef CONFIG_ANDROID
+      /* bionic has no pthread_cancel(), so the thread has to be woken instead: shutting
+       * its RTSP socket down makes the blocking read return and the thread unwinds by
+       * itself.  Without this the join below waits for the socket receive timeout and a
+       * new sender cannot take over the player until then. */
+      if (conns[i]->fd > 0) {
+        debug(2, "Connection %d: shutting down its socket so the thread can exit.",
+              connection_number);
+        shutdown(conns[i]->fd, SHUT_RDWR);
+      }
+#endif
       pthread_cancel(conns[i]->thread);
       pthread_join(conns[i]->thread, NULL);
       conns[i] = NULL;
@@ -326,7 +346,19 @@ void stop_play() {
 
 void release_play_lock(rtsp_conn_info *conn) {
   // no need thread cancellation points in here
+#ifdef CONFIG_ANDROID
+  /* This runs as the connection thread exits.  When a new sender breaks in,
+   * get_play_lock() holds this very lock (as a writer) and is waiting for that thread to
+   * join, so a blocking lock here deadlocks the receiver and the new session never
+   * plays.  If the lock is busy, the takeover is already in progress and there is
+   * nothing left for us to release. */
+  if (pthread_rwlock_trywrlock(&principal_conn_lock) != 0) {
+    debug(2, "release_play_lock: lock is taken, a takeover is in progress");
+    return;
+  }
+#else
   pthread_rwlock_wrlock(&principal_conn_lock);
+#endif
   if ((principal_conn == conn) || (conn == NULL)) { // if we have the player
     if (principal_conn != NULL) {
 #ifdef CONFIG_AIRPLAY_2

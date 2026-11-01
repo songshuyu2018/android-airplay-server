@@ -106,6 +106,7 @@ struct PcmSink {
     std::atomic<uint64_t> framesWritten{0};  // by pcm_sink_write
     std::atomic<uint64_t> framesFed{0};      // handed to the Oboe stream
     std::atomic<uint64_t> underruns{0};
+    std::atomic<int> peak{0};  /* loudest |sample| since the last report */
     std::atomic<bool> playing{false};
     int32_t burstFrames = 0;
 
@@ -306,7 +307,12 @@ int pcm_sink_write(PcmSink *sink, const void *buf, int frames) {
         memcpy(dst, buf, samplesWanted * sizeof(int16_t));
     } else if (bytesPerSample == 4) {
         const auto *src = static_cast<const int32_t *>(buf);
-        for (size_t i = 0; i < samplesWanted; i++) dst[i] = (int16_t)(src[i] >> 16);
+        for (size_t i = 0; i < samplesWanted; i++) {
+            dst[i] = (int16_t)(src[i] >> 16);
+            const int a = dst[i] < 0 ? -dst[i] : dst[i];
+            if (a > sink->peak.load(std::memory_order_relaxed))
+                sink->peak.store(a, std::memory_order_relaxed);
+        }
     } else if (bytesPerSample == 3) {
         const auto *src = static_cast<const uint8_t *>(buf);
         for (size_t i = 0; i < samplesWanted; i++) {
@@ -347,10 +353,11 @@ int pcm_sink_write(PcmSink *sink, const void *buf, int frames) {
     if (now - sink->lastStatsAtMs >= 5000) {
         sink->lastStatsAtMs = now;
         const size_t fill = sink->ring.availableToRead() / (size_t)channels;
-        LOGI("PCM in: %llu frames written, %llu fed to the device, %zu queued, %llu underruns",
+        const int peak = sink->peak.exchange(0, std::memory_order_relaxed);
+        LOGI("PCM in: %llu frames written, %llu fed to the device, %zu queued, %llu underruns, peak %d",
              (unsigned long long)sink->framesWritten.load(),
              (unsigned long long)sink->framesFed.load(), fill,
-             (unsigned long long)sink->underruns.load());
+             (unsigned long long)sink->underruns.load(), peak);
     }
     return accepted;
 }
