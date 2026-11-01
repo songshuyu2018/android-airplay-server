@@ -23,12 +23,25 @@ extern void airplay_android_audio_stop(void);
 extern void airplay_android_audio_flush(void);
 
 static unsigned int bytes_per_frame = 0;
+static unsigned int output_rate = 0;
+static unsigned int output_channels = 0;
+static unsigned int output_bytes_per_sample = 0;
+static int output_configured = 0;
+static int output_running = 0;
 
 static int play(void *buf, int samples, __attribute__((unused)) int sample_type,
                 uint32_t timestamp, uint64_t playtime) {
   if (bytes_per_frame == 0) {
     debug(1, "android: bytes per frame not initialised before play()!");
     return -1;
+  }
+  /* configure() is only called when the output format changes, so a second session
+   * inherits the format from the first one without being configured again -- while the
+   * sink was stopped when the first session ended.  Re-arm it here rather than staying
+   * silent. */
+  if (!output_running && output_configured) {
+    if (airplay_android_audio_config(output_rate, output_channels, output_bytes_per_sample) == 0)
+      output_running = 1;
   }
   return airplay_android_audio_write(buf, samples, (int) bytes_per_frame, timestamp, playtime);
 }
@@ -59,12 +72,21 @@ static int configure(int32_t requested_encoded_format, __attribute__((unused)) c
     bytes_per_sample = 2;
   }
   bytes_per_frame = bytes_per_sample * channels;
+  output_rate = rate;
+  output_channels = channels;
+  output_bytes_per_sample = bytes_per_sample;
+  output_configured = 1;
   debug(1, "android: output configuration %u Hz, %u channels, %u bytes per sample.", rate, channels,
         bytes_per_sample);
-  return airplay_android_audio_config(rate, channels, bytes_per_sample);
+  int rc = airplay_android_audio_config(rate, channels, bytes_per_sample);
+  output_running = (rc == 0);
+  return rc;
 }
 
-static void stop(void) { airplay_android_audio_stop(); }
+static void stop(void) {
+  output_running = 0;
+  airplay_android_audio_stop();
+}
 
 static void flush(void) { airplay_android_audio_flush(); }
 
