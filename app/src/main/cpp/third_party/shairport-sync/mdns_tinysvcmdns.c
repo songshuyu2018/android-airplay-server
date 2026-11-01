@@ -100,6 +100,10 @@ static int mdns_tinysvcmdns_register(char *ap1name, __attribute__((unused)) char
 
   // Skip the first one, it was already added by set_hostname
   for (ifa = ifa->ifa_next; ifa != NULL; ifa = ifa->ifa_next) {
+    // bionic lists an interface once per address family and leaves ifa_addr NULL for
+    // the families it does not have; dereferencing those entries crashed on Android
+    if (ifa->ifa_addr == NULL)
+      continue;
     if (ifa->ifa_flags & IFF_LOOPBACK) // Skip loop-back interfaces
       continue;
     // only check for the named interface, if specified
@@ -152,6 +156,11 @@ static int mdns_tinysvcmdns_register(char *ap1name, __attribute__((unused)) char
   struct mdns_service *svc =
       mdnsd_register_svc(svr, ap1name, extendedregtype, port, NULL,
                          (const char **)txt); // TTL should be 75 minutes, i.e. 4500 seconds
+  if (svc == NULL) {
+    warn("tinysvcmdns: could not register the service");
+    free(extendedregtype);
+    return -1;
+  }
   mdns_service_destroy(svc);
 
   free(extendedregtype);
