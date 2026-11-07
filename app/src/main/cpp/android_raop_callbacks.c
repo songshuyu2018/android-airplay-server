@@ -37,6 +37,7 @@ void android_callbacks_init(android_callback_ctx_t *ctx, JNIEnv *env, jobject ca
     ctx->require_pin = 0;
     ctx->registered_count = 0;
     ctx->audio_engine = NULL;
+    ctx->last_audio_activity_ns = 0;
     memset(ctx->registered_keys, 0, sizeof(ctx->registered_keys));
 
     pthread_mutex_init(&ctx->playback_info_lock, NULL);
@@ -107,9 +108,15 @@ void android_callbacks_update_playback_info(android_callback_ctx_t *ctx, double 
 static void _audio_process(void *cls, raop_ntp_t *ntp, audio_decode_struct *data) {
     android_callback_ctx_t *ctx = (android_callback_ctx_t *)cls;
     if (!ctx->audio_engine || !data->data || data->data_len <= 0) return;
-    /* audio resumed after a flush: the sender is still playing (seek/next rather than
-     * a pause), so tell the host to cancel its pending pause transition */
-    if (__atomic_exchange_n(&ctx->audio_resume_pending, 0, __ATOMIC_RELAXED)) {
+    /* Report sustained packet activity, not just the first post-FLUSH packet.
+     * Kotlin ignores the drain window; a one-shot notification is lost there. */
+    struct timespec activity_time;
+    clock_gettime(CLOCK_MONOTONIC, &activity_time);
+    uint64_t now_ns = (uint64_t)activity_time.tv_sec * 1000000000ULL + activity_time.tv_nsec;
+    uint64_t last_ns = __atomic_load_n(&ctx->last_audio_activity_ns, __ATOMIC_RELAXED);
+    if (now_ns - last_ns >= 500000000ULL &&
+        __atomic_compare_exchange_n(&ctx->last_audio_activity_ns, &last_ns, now_ns,
+                                    0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
         JNIEnv *env = _get_env(ctx);
         if (env && ctx->callback_obj && ctx->on_audio_resume)
             (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_audio_resume);
