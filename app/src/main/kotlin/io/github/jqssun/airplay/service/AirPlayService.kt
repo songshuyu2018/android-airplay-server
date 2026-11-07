@@ -1293,6 +1293,9 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         _updateMediaNotification()
     }
 
+    fun audioSpectrum(enabled: Boolean): FloatArray =
+        if (nativeHandle != 0L) NativeBridge.nativeAudioSpectrum(nativeHandle, enabled) else FloatArray(48)
+
     fun togglePlayPause() {
         val nowPlaying = !_playing.value
         dacpController?.let { if (nowPlaying) it.play() else it.pause() }

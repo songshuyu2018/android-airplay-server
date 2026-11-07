@@ -28,6 +28,11 @@ jobs:
           javac -d /tmp/session-tests app/src/main/java/io/github/jqssun/airplay/audio/AudioSessionGate.java tests/session/AudioSessionGateTest.java
           java -cp /tmp/session-tests AudioSessionGateTest
 
+      - name: Test PCM spectrum
+        run: |
+          g++ -std=c++17 -Iapp/src/main/cpp tests/audio/spectrum_test.cpp -o /tmp/spectrum_test
+          /tmp/spectrum_test
+
       - name: Build release APK
         run: |
           export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)

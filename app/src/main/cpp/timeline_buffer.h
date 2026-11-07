@@ -10,6 +10,7 @@
 #include <string>
 
 #include "audio_time.h"
+#include "audio_spectrum.h"
 #include "log_sink.h"
 
 /*
@@ -219,6 +220,7 @@ public:
           mRing((size_t)sampleRate * (MAX_LEAD_MS + 2000 + TRIM_THROTTLE_MS) / 1000 * channels) {}
 
     void noteOutputBufferFrames(int frames) { mTracker.noteOutputBufferFrames(frames); }
+    void spectrum(float *bands, bool enabled) { mSpectrum.enabled(enabled); mSpectrum.read(bands, mSampleRate); }
 
     // producer: push samples
     void write(const int16_t *pcm, size_t samples, int64_t ptsNs) {
@@ -346,6 +348,7 @@ public:
             }
             --mFadeFramesRemaining;
         }
+        mSpectrum.push(out, got / mChannels, mChannels);
         if (got < need) {
             memset(out + got, 0, (need - got) * sizeof(int16_t));
             mPriming = true;
@@ -444,6 +447,7 @@ private:
     LogSink *mLog = nullptr;
     DelayTracker mTracker;               // owns cushion policy; read live each read()
     SpscRing mRing;
+    AudioSpectrum mSpectrum;
     TimelineMetrics mMetrics;
     int mFadeFramesRemaining = 0;         // consumer-only, in frames
     bool mPriming = true;                // stream start: buffer output to build cushion
