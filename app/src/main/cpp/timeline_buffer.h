@@ -280,8 +280,9 @@ public:
 
         /* Absolute playout alignment: hold output until the ring holds the sender's
          * current lead, so what we emit is the audio due now on the sender timeline
-         * rather than whatever arrived first. */
-        {
+         * rather than whatever arrived first. Apply this only while priming: repeatedly
+         * stopping at the threshold during playback turns small jitter into audible gaps. */
+        if (mPriming) {
             const size_t target = (size_t)mTargetDepthSamples.load(std::memory_order_relaxed);
             const size_t guard = (size_t)mSampleRate * 10 / 1000 * mChannels;  // 10ms
             if (target > guard && avail + guard < target) {

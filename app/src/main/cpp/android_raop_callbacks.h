@@ -39,6 +39,7 @@ typedef struct {
     /* set by a flush, cleared by the next audio packet: distinguishes a pause
      * (sender stays silent) from a seek (audio resumes immediately) */
     int audio_resume_pending;
+    uint64_t last_audio_activity_ns;
     int h265_enabled;
     int require_pin;
     char *registered_keys[16];

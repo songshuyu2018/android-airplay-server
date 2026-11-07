@@ -41,6 +41,7 @@ class DacpController(ctx: Context) {
     @Volatile private var port = 0
 
     private val lock = Any()
+    @Volatile private var generation = 0L
     private var discovery: NsdManager.DiscoveryListener? = null
     private var resolving = false
     private var pendingResolve: NsdServiceInfo? = null
@@ -51,7 +52,14 @@ class DacpController(ctx: Context) {
     val ready: Boolean get() = host.isNotEmpty() && port > 0 && activeRemote.isNotEmpty()
 
     fun update(dacpId: String, activeRemote: String) {
-        val idChanged = this.dacpId != dacpId
+        val idChanged = this.dacpId != dacpId || this.activeRemote != activeRemote
+        if (idChanged) synchronized(lock) {
+            generation++
+            pendingCommands.clear()
+            pendingResolve = null
+            resolveRetries = 0
+            browseAttempts = 0
+        }
         this.dacpId = dacpId
         this.activeRemote = activeRemote
         if (idChanged) {
@@ -74,6 +82,12 @@ class DacpController(ctx: Context) {
     fun playResume() = _send("/ctrl-int/1/playresume")
 
     fun reset() {
+        synchronized(lock) {
+            generation++
+            pendingResolve = null
+            resolveRetries = 0
+            browseAttempts = 0
+        }
         dacpId = ""
         activeRemote = ""
         host = ""
@@ -99,20 +113,22 @@ class DacpController(ctx: Context) {
                 _stopDiscoveryLocked()
             }
             if (browseAttempts > 4) return
+            val session = generation
             val listener = object : NsdManager.DiscoveryListener {
                 override fun onDiscoveryStarted(serviceType: String) {
                     Log.i(TAG, "DACP browse started for $serviceType")
                 }
 
                 override fun onServiceFound(info: NsdServiceInfo) {
+                    if (session != generation) return
                     val wanted = "iTunes_Ctrl_$dacpId"
-                    if (!info.serviceName.startsWith(wanted)) return
+                    if (!info.serviceName.equals(wanted, ignoreCase = true)) return
                     Log.i(TAG, "DACP service found: ${info.serviceName}")
                     _resolve(info)
                 }
 
                 override fun onServiceLost(info: NsdServiceInfo) {
-                    if (info.serviceName.startsWith("iTunes_Ctrl_$dacpId")) {
+                    if (session == generation && info.serviceName.equals("iTunes_Ctrl_$dacpId", ignoreCase = true)) {
                         Log.i(TAG, "DACP service lost: ${info.serviceName}")
                         if (host.isNotEmpty() && info.serviceName.endsWith(dacpId)) {
                             host = ""
@@ -152,6 +168,8 @@ class DacpController(ctx: Context) {
     }
 
     private fun _resolve(info: NsdServiceInfo) {
+        val session = generation
+        if (!info.serviceName.equals("iTunes_Ctrl_$dacpId", ignoreCase = true)) return
         synchronized(lock) {
             if (resolving) {
                 pendingResolve = info
@@ -163,6 +181,7 @@ class DacpController(ctx: Context) {
             nsdManager.resolveService(info, object : NsdManager.ResolveListener {
                 override fun onResolveFailed(si: NsdServiceInfo, code: Int) {
                     synchronized(lock) { resolving = false }
+                    if (session != generation) { _nextResolve(); return }
                     if (code == NsdManager.FAILURE_ALREADY_ACTIVE) {
                         // another resolve is in flight: try again shortly
                         _retryResolve(si, 500)
@@ -174,6 +193,7 @@ class DacpController(ctx: Context) {
 
                 override fun onServiceResolved(si: NsdServiceInfo) {
                     synchronized(lock) { resolving = false }
+                    if (session != generation) { _nextResolve(); return }
                     val addr = si.host?.hostAddress
                     if (addr.isNullOrEmpty()) {
                         _retryResolve(si, 1500)
@@ -209,7 +229,8 @@ class DacpController(ctx: Context) {
             if (resolveRetries > 3) return
             resolveRetries++
         }
-        val retry = Runnable { if (!ready) _resolve(info) }
+        val session = generation
+        val retry = Runnable { if (session == generation && !ready) _resolve(info) }
         _handler.postDelayed(retry, delayMs)
     }
 
@@ -237,10 +258,21 @@ class DacpController(ctx: Context) {
         }
         val h = host
         val p = port
+        val session = generation
+        val remote = activeRemote
+        val id = dacpId
         _post {
-            if (_fetch(h, p, path)) {
+            if (session != generation) {
+                result.setException(IOException("DACP session changed"))
+                return@_post
+            }
+            if (_fetch(h, p, path, id, remote)) {
                 result.set(Unit)
             } else {
+                if (session != generation) {
+                    result.setException(IOException("DACP session changed"))
+                    return@_post
+                }
                 // the sender may have moved: forget the endpoint and look again
                 host = ""
                 port = 0
@@ -266,22 +298,25 @@ class DacpController(ctx: Context) {
         if (commands.isEmpty()) return
         val h = host
         val p = port
+        val session = generation
+        val remote = activeRemote
+        val id = dacpId
         _post {
             for (path in commands) {
-                if (!_fetch(h, p, path)) break
+                if (session != generation || !_fetch(h, p, path, id, remote)) break
             }
         }
     }
 
-    private fun _fetch(h: String, p: Int, path: String): Boolean {
+    private fun _fetch(h: String, p: Int, path: String, id: String, remote: String): Boolean {
         val url = "http://$h:$p$path"
         return try {
             val conn = URL(url).openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
             // Apple's DACP identifies the session by BOTH headers; a request carrying
             // only Active-Remote is ignored by most senders.
-            conn.setRequestProperty("Active-Remote", activeRemote)
-            if (dacpId.isNotEmpty()) conn.setRequestProperty("DACP-ID", dacpId)
+            conn.setRequestProperty("Active-Remote", remote)
+            if (id.isNotEmpty()) conn.setRequestProperty("DACP-ID", id)
             conn.setRequestProperty("Host", "$h:$p")
             conn.connectTimeout = 2000
             conn.readTimeout = 2000

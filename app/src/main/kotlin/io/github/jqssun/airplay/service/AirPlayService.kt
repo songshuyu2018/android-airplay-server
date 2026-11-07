@@ -283,7 +283,6 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
                         airPlayVideoPlayer.setPlaying(true)
                         return
                     }
-                    _setPlaying(true)
                     dacpController?.play()
                 }
                 override fun onPause() {
@@ -291,7 +290,6 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
                         airPlayVideoPlayer.setPlaying(false)
                         return
                     }
-                    _setPlaying(false)
                     dacpController?.pause()
                 }
                 override fun onStop() {
@@ -645,6 +643,8 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     }
 
     private fun _shutdown() {
+        _mainHandler.removeCallbacks(audioPauseAfterFlush)
+        _mainHandler.removeCallbacks(_endSessionRunnable)
         audioRenderer.detachEngine()
         if (nativeHandle != 0L) {
             NativeBridge.nativeStop(nativeHandle)
@@ -792,6 +792,10 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     override fun onVideoStop() = _endVideoPlayback("AirPlay Video stopped")
 
     override fun onAudioFormat(ct: Int, spf: Int, usingScreen: Boolean) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            _mainHandler.post { onAudioFormat(ct, spf, usingScreen) }
+            return
+        }
         clearPin()
         audioRenderer.start()
         audioRenderer.setFormat(ct, spf)
@@ -909,13 +913,18 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     }
 
     override fun onConnectionInit() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            _mainHandler.post { onConnectionInit() }
+            return
+        }
         // shairport-sync reports "active again" after a pause, so this can arrive while a
         // sender is still connected: only an actual 0 -> 1 transition is a new sender
         val firstConnection = _connectionCount.value == 0
         _mainHandler.removeCallbacks(_endSessionRunnable)
         _lastStreamActivityAt = SystemClock.elapsedRealtime()
+        if (!prefs[Prefs.USE_SHAIRPORT]) _connectionCount.value += 1
         if (firstConnection) {
-            _connectionCount.value = 1
+            if (prefs[Prefs.USE_SHAIRPORT]) _connectionCount.value = 1
             log("Sender connected")
             if (prefs[Prefs.USE_SHAIRPORT]) _setAudioOnly(true)
             if (shouldLaunchOnConnect()) launchMainActivity()
@@ -923,6 +932,10 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     }
 
     override fun onConnectionDestroy() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            _mainHandler.post { onConnectionDestroy() }
+            return
+        }
         // shairport-sync's "inactive" only means the sender went quiet for its activity
         // timeout: keep the track, cover art and audio-only view so a pause does not
         // blank the UI and leave it blank when playback resumes
@@ -947,19 +960,15 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     /** Runs only if nothing has arrived since the last connection was torn down. */
     private val _endSessionRunnable = Runnable {
         if (_connectionCount.value != 0) return@Runnable
-        // The deciding fact is whether the listener can still hear something: a sender
-        // that took over keeps the playout clock moving, a disconnected one leaves it
-        // frozen.  Metadata alone would be a guess -- a new sender may not repeat it.
-        val stillPlaying = currentPositionMs() - _positionAtTeardown > 600L
-        if (stillPlaying || SystemClock.elapsedRealtime() - _lastStreamActivityAt < SESSION_END_GRACE_MS) {
-            _connectionCount.value = 1
-            log("Sender takeover: keeping the current session")
-            return@Runnable
-        }
         endSession()
     }
 
     private fun endSession() {
+        _mainHandler.removeCallbacks(audioPauseAfterFlush)
+        _trackStartRtp = -1L
+        _progressBaseTime = 0L
+        _progressBaseFrames = -1L
+        _playing.value = false
         run {
             // clients may drop without POST /stop; must run before the poll-state reset
             _endVideoPlayback("AirPlay Video stopped (disconnect)")
@@ -1000,6 +1009,10 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     }
 
     override fun onMetadata(data: ByteArray) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            _mainHandler.post { onMetadata(data) }
+            return
+        }
         _lastStreamActivityAt = SystemClock.elapsedRealtime()
         _mainHandler.removeCallbacks(_endSessionRunnable)
         val map = DmapParser.parse(data)
@@ -1026,6 +1039,10 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     }
 
     override fun onCoverArt(data: ByteArray) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            _mainHandler.post { onCoverArt(data) }
+            return
+        }
         _lastStreamActivityAt = SystemClock.elapsedRealtime()
         _mainHandler.removeCallbacks(_endSessionRunnable)
         val bmp = BitmapFactory.decodeByteArray(data, 0, data.size) ?: return
@@ -1041,6 +1058,10 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     private val audioPauseAfterFlush = Runnable { _setPlaying(false) }
 
     override fun onAudioFlush() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            _mainHandler.post { onAudioFlush() }
+            return
+        }
         _lastFlushAt = SystemClock.elapsedRealtime()
         // Freeze the position where the audio really stopped. After a FLUSH the sender
         // restarts its timeline and its next progress line reports a small elapsed
@@ -1059,11 +1080,18 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     }
 
     override fun onAudioResume() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            _mainHandler.post { onAudioResume() }
+            return
+        }
         // A FLUSH is followed by roughly one stream-lead of already-buffered audio, so
         // packets arriving right after it do not mean the sender resumed: only audio
         // that keeps coming past the lead window counts as a resume (a seek behaves
         // that way, a pause does not).
         if (SystemClock.elapsedRealtime() - _lastFlushAt < 2500L) return
+        _lastStreamActivityAt = SystemClock.elapsedRealtime()
+        _mainHandler.removeCallbacks(_endSessionRunnable)
+        if (_connectionCount.value == 0) _connectionCount.value = 1
         _mainHandler.removeCallbacks(audioPauseAfterFlush)
         if (!_playing.value) _setPlaying(true)
     }
@@ -1079,6 +1107,10 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     private fun rtpDelta(a: Long, b: Long): Long = (a - b) and 0xFFFFFFFFL
 
     override fun onProgress(start: Long, curr: Long, end: Long) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            _mainHandler.post { onProgress(start, curr, end) }
+            return
+        }
         _lastStreamActivityAt = SystemClock.elapsedRealtime()
         _mainHandler.removeCallbacks(_endSessionRunnable)
         val rate = 44100.0
@@ -1113,42 +1145,32 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             // the player snapshot the UI draws was built from the old length
             _refreshDacpPlayer()
         }
-        // While parked after a pause the sender keeps emitting progress against the
-        // timeline it restarted (typically a jump to ~1 s). Taking it would move the
-        // position away from the pause point, so keep the frozen value until we are
-        // playing again.
-        if (!_playing.value) return
-
-        // Degenerate progress: a rewind to zero on the same track would restart the
-        // displayed time from 0:00.
-        if (sameTrack && posMs == 0L && _positionMs.value > 2000L) return
-
-        // Large jumps are usually the sender's stream-relative bookkeeping rather than a
-        // seek; accept one only after a second update confirms it.
-        val shown = currentPositionMs()
-        if (sameTrack && _positionMs.value > 5000L && kotlin.math.abs(posMs - shown) > 5000L) {
-            if (_pendingSeekMs < 0L || kotlin.math.abs(posMs - _pendingSeekMs) > 2000L) {
-                _pendingSeekMs = posMs
-                return
-            }
-        }
+        // A valid progress report is authoritative even for a paused stream or a
+        // discontinuous seek. Many senders emit only one report after seeking.
         _pendingSeekMs = -1L
 
         _positionMs.value = posMs
         if (durKnown) _durationMs.value = durMs
         _progressBaseMs = posMs
-        _progressBaseTime = SystemClock.elapsedRealtime()
-        _progressBaseFrames = if (_pcmClock) NativeBridge.nativePcmPlayoutFrames() else -1L
-        _playing.value = true
+        _progressBaseTime = if (_playing.value) SystemClock.elapsedRealtime() else 0L
+        _progressBaseFrames = if (_pcmClock && _playing.value) NativeBridge.nativePcmPlayoutFrames() else -1L
         _updatePlaybackState()
         _refreshDacpPlayer()
     }
 
     override fun onAudioTeardown() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            _mainHandler.post { onAudioTeardown() }
+            return
+        }
         _setPlaying(false)
     }
 
     override fun onDacpId(dacpId: String, activeRemote: String) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            _mainHandler.post { onDacpId(dacpId, activeRemote) }
+            return
+        }
         dacpController?.update(dacpId, activeRemote)
         log("DACP: $dacpId")
     }
@@ -1193,11 +1215,13 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
 
     fun togglePlayPause() {
         val nowPlaying = !_playing.value
-        _setPlaying(nowPlaying)
         dacpController?.let { if (nowPlaying) it.play() else it.pause() }
     }
 
     private fun _setPlaying(playing: Boolean) {
+        if (_playing.value == playing) return
+        val position = currentPositionMs()
+        _positionMs.value = position
         _playing.value = playing
         _refreshDacpPlayer()
         if (playing) {
@@ -1207,7 +1231,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             _progressBaseFrames = if (_pcmClock) NativeBridge.nativePcmPlayoutFrames() else -1L
         } else {
             // freeze position
-            _positionMs.value = currentPositionMs()
+            _positionMs.value = position
             _progressBaseTime = 0
             _progressBaseFrames = -1L
         }
