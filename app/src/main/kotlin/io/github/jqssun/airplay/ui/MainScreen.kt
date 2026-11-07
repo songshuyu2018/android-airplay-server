@@ -83,6 +83,7 @@ import kotlinx.coroutines.delay
 
 private enum class Tab(val labelRes: Int, val icon: ImageVector) {
     OVERVIEW(R.string.tab_overview, Icons.Default.Cast),
+    PLAYING(R.string.tab_playing, Icons.Default.Album),
     LOGS(R.string.tab_logs, Icons.AutoMirrored.Filled.Article),
     SETTINGS(R.string.tab_settings, Icons.Default.Settings)
 }
@@ -96,7 +97,7 @@ fun MainScreen(
     onPip: () -> Unit = {},
     onLocalNetwork: () -> Unit = {}
 ) {
-    var tab by remember { mutableStateOf(Tab.OVERVIEW) }
+    var tab by remember { mutableStateOf(Tab.PLAYING) }
     var fullscreen by remember { mutableStateOf(false) }
     val pin by viewModel.pinCode.collectAsState()
     val connections by viewModel.connectionCount.collectAsState()
@@ -138,10 +139,10 @@ fun MainScreen(
 
     val activity = LocalContext.current as? Activity
     val videoScreen = videoPlaybackActive || videoSessionPending
-    LaunchedEffect(fullscreen, videoScreen) {
+    LaunchedEffect(fullscreen, videoScreen, tab) {
         val window = activity?.window ?: return@LaunchedEffect
         val controller = WindowInsetsControllerCompat(window, window.decorView)
-        if (fullscreen || videoScreen) {
+        if (fullscreen || videoScreen || tab == Tab.PLAYING) {
             controller.hide(WindowInsetsCompat.Type.systemBars())
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         } else {
@@ -496,7 +497,7 @@ fun MainScreen(
 
     // restore system bars when exiting pip back to non-fullscreen
     LaunchedEffect(isInPip) {
-        if (!isInPip && !fullscreen) {
+        if (!isInPip && !fullscreen && tab != Tab.PLAYING) {
             val window = activity?.window ?: return@LaunchedEffect
             WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
         }
@@ -507,7 +508,9 @@ fun MainScreen(
         if (pin != null) fullscreen = false
     }
 
-    if (fullscreen) {
+    if (tab == Tab.PLAYING && !fullscreen) {
+        PlayingScreen(viewModel, onBack = { tab = Tab.OVERVIEW })
+    } else if (fullscreen) {
         BackHandler { fullscreen = false }
         FullscreenVideo(
             viewModel = viewModel,
@@ -584,6 +587,7 @@ private fun TabContent(
             viewModel, video,
             onFullscreen = onFullscreen, onPip = onPip, onLocalNetwork = onLocalNetwork, showAudioMode = showAudioMode
         )
+        Tab.PLAYING -> Unit
         Tab.LOGS -> LogsScreen(viewModel)
         Tab.SETTINGS -> SettingsScreen(viewModel)
     }
