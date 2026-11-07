@@ -280,8 +280,9 @@ public:
 
         /* Absolute playout alignment: hold output until the ring holds the sender's
          * current lead, so what we emit is the audio due now on the sender timeline
-         * rather than whatever arrived first. */
-        {
+         * rather than whatever arrived first. Apply this only while priming: repeatedly
+         * stopping at the threshold during playback turns small jitter into audible gaps. */
+        if (mPriming) {
             const size_t target = (size_t)mTargetDepthSamples.load(std::memory_order_relaxed);
             const size_t guard = (size_t)mSampleRate * 10 / 1000 * mChannels;  // 10ms
             if (target > guard && avail + guard < target) {
@@ -328,10 +329,23 @@ public:
                 return;
             }
             mPriming = false;
+            mFadeFramesRemaining = std::max(1, mSampleRate * 30 / 1000);
             mPrimeSilenceFrames = 0;
         }
 
         const size_t got = mRing.read(out, need);
+        // Ramp only actual PCM, after priming, so time spent waiting on the
+        // sender's presentation timestamp does not consume the fade.
+        const int fadeFrames = std::max(1, mSampleRate * 30 / 1000);
+        const size_t framesRead = got / mChannels;
+        for (size_t frame = 0; frame < framesRead && mFadeFramesRemaining > 0; ++frame) {
+            const int gain = fadeFrames - mFadeFramesRemaining + 1;
+            for (int channel = 0; channel < mChannels; ++channel) {
+                const size_t index = frame * mChannels + channel;
+                out[index] = (int16_t)((int32_t)out[index] * gain / fadeFrames);
+            }
+            --mFadeFramesRemaining;
+        }
         if (got < need) {
             memset(out + got, 0, (need - got) * sizeof(int16_t));
             mPriming = true;
@@ -431,6 +445,7 @@ private:
     DelayTracker mTracker;               // owns cushion policy; read live each read()
     SpscRing mRing;
     TimelineMetrics mMetrics;
+    int mFadeFramesRemaining = 0;         // consumer-only, in frames
     bool mPriming = true;                // stream start: buffer output to build cushion
     uint32_t mPrimeSilenceFrames = 0;    // consumer-only: silence frames output while priming with partial data
     int64_t mLastTrimBlockNs = 0;        // consumer-only: last trim/underrun time (trim throttle)
