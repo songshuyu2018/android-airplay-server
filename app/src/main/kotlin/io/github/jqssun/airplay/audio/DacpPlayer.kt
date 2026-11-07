@@ -81,11 +81,8 @@ class DacpPlayer(
 
     override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
         val dacp = dacp() ?: return Futures.immediateVoidFuture()
-        return Futures.transform(
-            if (playWhenReady) dacp.play() else dacp.pause(),
-            { setPlaying(playWhenReady) },
-            MoreExecutors.directExecutor()
-        )
+        // HTTP success acknowledges the command, not the sender's playback state.
+        return if (playWhenReady) dacp.play() else dacp.pause()
     }
 
     override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> {
