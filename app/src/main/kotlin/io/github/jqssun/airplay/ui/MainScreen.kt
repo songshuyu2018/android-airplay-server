@@ -22,6 +22,8 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.rounded.BrightnessHigh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import io.github.jqssun.airplay.service.AudioPageRequest
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -95,9 +97,14 @@ fun MainScreen(
     onSurfaceAvailable: (android.view.Surface) -> Unit,
     onSurfaceDestroyed: (android.view.Surface) -> Unit,
     onPip: () -> Unit = {},
-    onLocalNetwork: () -> Unit = {}
+    onLocalNetwork: () -> Unit = {},
+    audioPageRequest: AudioPageRequest? = null,
+    manualEntryId: Long = 0L,
+    onAudioIdleBackground: () -> Unit = {}
 ) {
-    var tab by remember { mutableStateOf(Tab.PLAYING) }
+    var tab by rememberSaveable { mutableStateOf(Tab.PLAYING) }
+    var automaticPage by rememberSaveable { mutableStateOf(false) }
+    var handledAudioRequest by rememberSaveable { mutableStateOf(0L) }
     var fullscreen by remember { mutableStateOf(false) }
     val pin by viewModel.pinCode.collectAsState()
     val connections by viewModel.connectionCount.collectAsState()
@@ -106,6 +113,40 @@ fun MainScreen(
     val videoSessionPending by viewModel.videoSessionPending.collectAsState()
     val mirroringActive by viewModel.mirroringActive.collectAsState()
     val autoFullscreen by viewModel.pref(Prefs.AUTO_FULLSCREEN).collectAsState()
+
+    LaunchedEffect(manualEntryId) {
+        if (manualEntryId != 0L) automaticPage = false
+    }
+    LaunchedEffect(audioPageRequest) {
+        val request = audioPageRequest ?: return@LaunchedEffect
+        if (request.id < handledAudioRequest) return@LaunchedEffect
+        if (request.id == handledAudioRequest) {
+            // An activity intent can arrive after its service-state counterpart.
+            if (tab == Tab.PLAYING) {
+                if (request.forceAutomatic) automaticPage = true
+                if (request.forceManual) automaticPage = false
+            }
+            return@LaunchedEffect
+        }
+        handledAudioRequest = request.id
+        if (request.open) {
+            if (videoPlaybackActive || videoSessionPending || mirroringActive) return@LaunchedEffect
+            automaticPage = when {
+                request.forceManual -> false
+                request.forceAutomatic -> true
+                tab != Tab.PLAYING -> true
+                else -> automaticPage
+            }
+            fullscreen = false
+            tab = Tab.PLAYING
+        } else if (tab == Tab.PLAYING && !fullscreen && !videoPlaybackActive && !videoSessionPending && !mirroringActive) {
+            val background = automaticPage
+            automaticPage = false
+            tab = Tab.OVERVIEW
+            if (background) onAudioIdleBackground()
+        }
+    }
+
 
     // don't use movableContentOf: moving AndroidView across subcomposition boundaries makes it crash on reparent
     val video: @Composable () -> Unit = {
@@ -509,7 +550,7 @@ fun MainScreen(
     }
 
     if (tab == Tab.PLAYING && !fullscreen) {
-        PlayingScreen(viewModel, onBack = { tab = Tab.OVERVIEW })
+        PlayingScreen(viewModel, onBack = { automaticPage = false; tab = Tab.OVERVIEW })
     } else if (fullscreen) {
         BackHandler { fullscreen = false }
         FullscreenVideo(
@@ -531,7 +572,7 @@ fun MainScreen(
                         Tab.entries.forEach { t ->
                             NavigationBarItem(
                                 selected = tab == t,
-                                onClick = { tab = t },
+                                onClick = { automaticPage = false; tab = t },
                                 icon = { Icon(t.icon, null) },
                                 label = { Text(stringResource(t.labelRes)) },
                                 modifier = Modifier.dpadFocus()

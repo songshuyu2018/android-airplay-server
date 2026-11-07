@@ -116,8 +116,8 @@
     <string name="setting_alac_desc">Offer ALAC in the mDNS record; used for music streaming</string>
     <string name="setting_aac">Advertise AAC codec</string>
     <string name="setting_aac_desc">Offer AAC-ELD/AAC-LC in the mDNS record; used for screen mirroring audio</string>
-    <string name="setting_launch_on_connect">Open this application on connect</string>
-    <string name="setting_launch_on_connect_desc">Show the screen when a sender connects</string>
+    <string name="setting_launch_on_connect">Show playback automatically on connect</string>
+    <string name="setting_launch_on_connect_desc">Open Playing for music or open the app for screen mirroring</string>
     <string name="setting_launch_on_connect_no_permission">Tap to grant Display over other apps permission</string>
     <string name="setting_discovery">Discoverable over</string>
     <string name="setting_discovery_all_desc">Advertise on all usable interfaces. Uses NsdManager.</string>
@@ -216,4 +216,9 @@
     <string name="player_pause">Pause</string>
     <string name="player_unknown_artist">Unknown artist</string>
     <string name="player_unknown_album">Unknown album</string>
+    <string name="background_launch_title">Allow background pop-ups</string>
+    <string name="background_launch_message">To open Playing when music arrives in the background, allow Background pop-ups (后台弹窗) in this app’s Huawei permission settings. This is separate from Display over other apps. If already allowed, choose Continue.</string>
+    <string name="background_launch_setting_desc">Huawei: enable Background pop-ups (后台弹窗) for this app. This switch cannot be queried using Android runtime permissions.</string>
+    <string name="background_launch_settings">Open settings</string>
+    <string name="background_launch_continue">Continue</string>
 </resources>

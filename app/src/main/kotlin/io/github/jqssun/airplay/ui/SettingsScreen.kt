@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import io.github.jqssun.airplay.BackgroundLaunchAccess
 import io.github.jqssun.airplay.Prefs
 import io.github.jqssun.airplay.R
 import io.github.jqssun.airplay.appSettingsIntent
@@ -165,7 +166,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
                     role = Role.Switch,
                     onValueChange = {
                         viewModel.set(Prefs.LAUNCH_ON_CONNECT, it)
-                        if (it && !canAutoLaunch(ctx)) _openOverlaySettings(ctx)
+                        if (it && (BackgroundLaunchAccess.isHuawei || !canAutoLaunch(ctx))) _openOverlaySettings(ctx)
                     }
                 ),
             headlineContent = { Text(stringResource(R.string.setting_launch_on_connect)) },
@@ -179,6 +180,18 @@ fun SettingsScreen(viewModel: MainViewModel) {
                 Switch(checked = autoLaunch, onCheckedChange = null)
             }
         )
+
+        if (BackgroundLaunchAccess.isHuawei) {
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.background_launch_title)) },
+                supportingContent = { Text(stringResource(R.string.background_launch_setting_desc)) },
+                trailingContent = {
+                    TextButton(onClick = { BackgroundLaunchAccess.openSettings(ctx) }) {
+                        Text(stringResource(R.string.background_launch_settings))
+                    }
+                }
+            )
+        }
 
         SectionHeader(stringResource(R.string.section_display))
 
@@ -461,10 +474,14 @@ fun SettingsScreen(viewModel: MainViewModel) {
 }
 
 private fun canAutoLaunch(ctx: Context): Boolean =
-    Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || Settings.canDrawOverlays(ctx)
+    BackgroundLaunchAccess.canEnableAutoLaunch(ctx)
 
 // overlay settings screen may not exist on some builds
 private fun _openOverlaySettings(ctx: Context) {
+    if (BackgroundLaunchAccess.isHuawei) {
+        BackgroundLaunchAccess.openSettings(ctx)
+        return
+    }
     val overlay = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${ctx.packageName}"))
     try {
         ctx.startActivity(overlay.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

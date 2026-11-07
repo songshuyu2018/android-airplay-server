@@ -10,6 +10,9 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.os.SystemClock
+import kotlinx.coroutines.Job
+import io.github.jqssun.airplay.service.AudioPageRequest
 import android.util.Rational
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -37,6 +40,13 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
     private var service: AirPlayService? = null
+    private var presentationJob: Job? = null
+    private val audioPageRequest = mutableStateOf<AudioPageRequest?>(null)
+    private val manualPageEntry = mutableStateOf(0L)
+    private var requestFloor = SystemClock.elapsedRealtimeNanos()
+    private var lastAudioRequest = 0L
+    private var suppressAutoPip = false
+    private var runtimePermissionsPending = false
     val isInPip = mutableStateOf(false)
     private val logCallback: (String) -> Unit = { viewModel.addLog(it) }
     private val pinCallback: (String?) -> Unit = { viewModel.showPin(it) }
@@ -45,6 +55,19 @@ class MainActivity : ComponentActivity() {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val svc = (binder as? AirPlayService.LocalBinder)?.service ?: return
             service = svc
+            svc.uiVisible = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            presentationJob?.cancel()
+            presentationJob = lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    svc.audioPageRequest.collect { request ->
+                        if (request.id > requestFloor && request.id > lastAudioRequest) {
+                            lastAudioRequest = request.id
+                            viewModel.updateFromService()
+                            audioPageRequest.value = request
+                        }
+                    }
+                }
+            }
             svc.logCallback = logCallback
             svc.pinCallback = pinCallback
             viewModel.bindService(svc)
@@ -52,6 +75,7 @@ class MainActivity : ComponentActivity() {
             _autoStart()
         }
         override fun onServiceDisconnected(name: ComponentName?) {
+            presentationJob?.cancel()
             service = null
             viewModel.unbindService()
         }
@@ -59,11 +83,24 @@ class MainActivity : ComponentActivity() {
 
     private val permissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { if (it.isNotEmpty()) _syncLocalNetwork(requested = true) }
+    ) {
+        runtimePermissionsPending = false
+        if (it.isNotEmpty()) _syncLocalNetwork(requested = true)
+        offerBackgroundLaunchPermission()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) { offerBackgroundLaunchPermission() }
+        }
         enableEdgeToEdge()
+        if (savedInstanceState == null) {
+            handlePresentationIntent(intent)
+        } else {
+            requestFloor = savedInstanceState.getLong("audio_request_floor", requestFloor)
+            lastAudioRequest = savedInstanceState.getLong("last_audio_request", 0L)
+        }
 
         val missing = buildList {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !_granted(Manifest.permission.POST_NOTIFICATIONS)) {
@@ -71,7 +108,10 @@ class MainActivity : ComponentActivity() {
             }
             if (!hasLocalNetwork()) add(Manifest.permission.ACCESS_LOCAL_NETWORK)
         }
-        if (missing.isNotEmpty()) permissions.launch(missing.toTypedArray())
+        if (missing.isNotEmpty()) {
+            runtimePermissionsPending = true
+            permissions.launch(missing.toTypedArray())
+        }
 
         bindService(Intent(this, AirPlayService::class.java), connection, BIND_AUTO_CREATE)
 
@@ -116,10 +156,59 @@ class MainActivity : ComponentActivity() {
                     onSurfaceAvailable = { viewModel.onSurfaceAvailable(it) },
                     onSurfaceDestroyed = { viewModel.onSurfaceDestroyed(it) },
                     onPip = { enterPip() },
-                    onLocalNetwork = ::_requestLocalNetwork
+                    onLocalNetwork = ::_requestLocalNetwork,
+                    audioPageRequest = audioPageRequest.value,
+                    manualEntryId = manualPageEntry.value,
+                    onAudioIdleBackground = ::backgroundAfterAudio
                 )
             }
         }
+    }
+
+    private fun offerBackgroundLaunchPermission() {
+        if (runtimePermissionsPending || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        // Never place a permission prompt over an automatically presented player.
+        if (intent?.action == AirPlayService.ACTION_SHOW_AUDIO &&
+            intent.getBooleanExtra(AirPlayService.EXTRA_AUTOMATIC, false)) return
+        BackgroundLaunchAccess.showFirstLaunchPrompt(this)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putLong("audio_request_floor", requestFloor)
+        outState.putLong("last_audio_request", lastAudioRequest)
+        super.onSaveInstanceState(outState)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handlePresentationIntent(intent)
+        window.decorView.post { offerBackgroundLaunchPermission() }
+    }
+
+    private fun handlePresentationIntent(intent: Intent?) {
+        if (intent?.action == AirPlayService.ACTION_SHOW_AUDIO) {
+            val id = intent.getLongExtra(AirPlayService.EXTRA_AUDIO_REQUEST, 0L)
+            if (id < lastAudioRequest) return
+            lastAudioRequest = id
+            val automatic = intent.getBooleanExtra(AirPlayService.EXTRA_AUTOMATIC, false)
+            viewModel.updateFromService()
+            audioPageRequest.value = AudioPageRequest(id, true,
+                forceAutomatic = automatic, forceManual = !automatic)
+        } else if (intent?.action == Intent.ACTION_MAIN) {
+            // A launcher entry is a manual visit, not a replay of an old service event.
+            requestFloor = SystemClock.elapsedRealtimeNanos()
+            manualPageEntry.value = requestFloor
+            audioPageRequest.value = null
+        }
+    }
+
+    private fun backgroundAfterAudio() {
+        service?.uiVisible = false
+        suppressAutoPip = true
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) setPictureInPictureParams(_pipParams())
+        moveTaskToBack(true)
     }
 
     private fun _granted(permission: String) =
@@ -163,6 +252,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        suppressAutoPip = false
+        service?.uiVisible = true
         _syncLocalNetwork()
         _refreshForeground()
     }
@@ -184,7 +275,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun _shouldAutoPip(): Boolean =
-        viewModel.serverState.value == AirPlayService.ServerState.RUNNING &&
+        !suppressAutoPip && viewModel.serverState.value == AirPlayService.ServerState.RUNNING &&
             viewModel.connectionCount.value > 0 && !viewModel.audioOnly.value
 
     override fun onUserLeaveHint() {
@@ -199,6 +290,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        service?.uiVisible = false
         // never stop mid-session
         if (!viewModel.pref(Prefs.RUN_IN_BACKGROUND).value && !isChangingConfigurations &&
             viewModel.serverState.value == AirPlayService.ServerState.RUNNING &&
@@ -208,6 +300,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        presentationJob?.cancel()
         service?.let {
             if (it.logCallback === logCallback) it.logCallback = null
             if (it.pinCallback === pinCallback) it.pinCallback = null
