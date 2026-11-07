@@ -50,6 +50,7 @@ object NativeBridge {
                                             forceSwAac: Boolean, realtimePriority: Boolean,
                                             lowLatency: Boolean, benchmarkLog: Boolean): Boolean
     external fun nativeServerAudioStart(handle: Long): Boolean
+    external fun nativeAudioSpectrum(handle: Long, enabled: Boolean): FloatArray
     external fun nativeServerAudioStop(handle: Long)
     external fun nativeServerAudioSetClientGain(handle: Long, gain: Float)
     external fun nativeServerAudioFormat(handle: Long, ct: Int, spf: Int)
