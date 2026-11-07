@@ -1193,11 +1193,13 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
 
     fun togglePlayPause() {
         val nowPlaying = !_playing.value
-        _setPlaying(nowPlaying)
         dacpController?.let { if (nowPlaying) it.play() else it.pause() }
     }
 
     private fun _setPlaying(playing: Boolean) {
+        if (_playing.value == playing) return
+        val position = currentPositionMs()
+        _positionMs.value = position
         _playing.value = playing
         _refreshDacpPlayer()
         if (playing) {
@@ -1207,7 +1209,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             _progressBaseFrames = if (_pcmClock) NativeBridge.nativePcmPlayoutFrames() else -1L
         } else {
             // freeze position
-            _positionMs.value = currentPositionMs()
+            _positionMs.value = position
             _progressBaseTime = 0
             _progressBaseFrames = -1L
         }
