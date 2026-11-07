@@ -192,6 +192,19 @@ class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app
     val trackInfo: StateFlow<TrackInfo> = _trackInfo.asStateFlow()
 
 
+    private val _audioPlaying = MutableStateFlow(false)
+    val audioPlaying = _audioPlaying.asStateFlow()
+    private val _audioPositionMs = MutableStateFlow(0L)
+    val audioPositionMs = _audioPositionMs.asStateFlow()
+    private val _audioDurationMs = MutableStateFlow(0L)
+    val audioDurationMs = _audioDurationMs.asStateFlow()
+    private val _audioControlsReady = MutableStateFlow(false)
+    val audioControlsReady = _audioControlsReady.asStateFlow()
+    fun toggleAudioPlayback() { service?.togglePlayPause() }
+    fun previousAudioTrack() { service?.dacpController?.prevItem() }
+    fun nextAudioTrack() { service?.dacpController?.nextItem() }
+    fun audioSpectrum(enabled: Boolean) = service?.audioSpectrum(enabled) ?: FloatArray(48)
+
     // logs
     private val _logs = MutableStateFlow<List<String>>(emptyList())
     val logs: StateFlow<List<String>> = _logs.asStateFlow()
@@ -381,6 +394,10 @@ class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app
             _videoAspect.value = it.videoAspect.value
             _videoResolution.value = it.videoResolution.value
             _audioOnly.value = it.audioOnly.value
+            _audioPlaying.value = it.playing.value
+            _audioPositionMs.value = it.currentPositionMs()
+            _audioDurationMs.value = it.durationMs.value
+            _audioControlsReady.value = it.dacpController?.ready == true
             val videoActive = it.videoPlaybackActive.value
             val playSeq = it.videoPlaySeq.value
             if (playSeq != _lastVideoPlaySeq) {

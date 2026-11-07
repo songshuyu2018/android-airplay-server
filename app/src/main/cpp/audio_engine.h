@@ -35,6 +35,7 @@ void audio_engine_on_format(AudioEngine *engine, int ct, int spf);
 
 /* begin or resume playout; false if stream fails to open; idempotent */
 bool audio_engine_start(AudioEngine *engine);
+void audio_engine_spectrum(AudioEngine *engine, float *bands, bool enabled);
 
 /* pause playout, releases audio output devices while paused; idempotent */
 void audio_engine_pause(AudioEngine *engine);
