@@ -26,7 +26,7 @@ public class PlayerPaletteTest {
         check(p.vibrantGlow==red); // A small vivid accent beats a broad muted cover.
         pixels[100]=cyan;
         p=PlayerPalette.fromPixels(pixels);
-        check(p.vibrantGlow==red && p.vibrantSecondaryGlow==red); // Ignore a stray pixel.
+        check(p.vibrantGlow==red && p.vibrantSecondaryGlow==0xffffffff); // Ignore a stray pixel.
         Arrays.fill(pixels,0xfff4f4f4);
         Arrays.fill(pixels,0,48,red); Arrays.fill(pixels,48,80,cyan);
         p=PlayerPalette.fromPixels(pixels);
@@ -35,7 +35,7 @@ public class PlayerPaletteTest {
         verify(p); // Readability is guaranteed by the continuous light colors themselves.
         Arrays.fill(pixels,0xff606060); pixels[0]=0x00ff0000;
         p=PlayerPalette.fromPixels(pixels);
-        check(p.vibrantGlow==0xff606060 && p.vibrantSecondaryGlow==0xff606060);
+        check(p.vibrantGlow==0xff606060 && p.vibrantSecondaryGlow==0xffffffff);
     }
     public static void main(String[] args) {
         verifyVibrantSelection();
@@ -43,6 +43,10 @@ public class PlayerPaletteTest {
         verify(PlayerPalette.fromPixels(new int[]{0,0x00ff0000}));
         for(int color:new int[]{0xff000000,0xffffffff,0xff808080,0xffff0000,0xff00ff00,0xff0000ff,0xffffff00}) {
             int[] pixels=new int[1024];Arrays.fill(pixels,color);verify(PlayerPalette.fromPixels(pixels));
+            PlayerPalette single=PlayerPalette.fromPixels(pixels);
+            check(single.secondaryGlow==0xffffffff);
+            if(color==0xffffffff) check(single.base==0xffffffff && single.glow==0xffffffff);
+            else check(single.glow!=single.secondaryGlow);
             if((color&255)==(color>>8&255)&&(color&255)==(color>>16&255)) {
                 int text=PlayerPalette.fromPixels(pixels).ink;
                 check((text&255)==(text>>8&255)&&(text&255)==(text>>16&255));

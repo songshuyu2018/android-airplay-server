@@ -42,3 +42,7 @@ The transport row opts out of Material's 48dp minimum layout size so it cannot
 force the scaled buttons beyond the column. Verify 320/360/480/600dp square screens
 with a two-line title and all three controls fully visible. The 4x ambient-light
 speed is retained.
+
+Near-identical extracted light colors use white as the secondary gradient stop.
+Single-hue and gray covers thus retain a gentle color-to-white wash; pure white
+stays white, and genuinely distinct extracted hues are retained.

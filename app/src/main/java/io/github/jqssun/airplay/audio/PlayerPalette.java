@@ -56,6 +56,13 @@ public final class PlayerPalette {
         int vividSecond = vividFirst < 0 ? -1 : selectVivid(vivid, opaquePixels, vividFirst);
         int vibrant = vividFirst < 0 ? average(sums[first]) : brighten(average(vivid[vividFirst]));
         int vibrantSecondary = vividSecond < 0 ? vibrant : brighten(average(vivid[vividSecond]));
+        // A missing or visually near-identical second hue needs a neutral stop,
+        // not a duplicate that fills the whole background with one color.
+        int dr = (vibrant >> 16 & 255) - (vibrantSecondary >> 16 & 255);
+        int dg = (vibrant >> 8 & 255) - (vibrantSecondary >> 8 & 255);
+        int db = (vibrant & 255) - (vibrantSecondary & 255);
+        if (dr * dr + dg * dg + db * db <= 48 * 48) vibrantSecondary = 0xffffffff;
+        // Pure white consequently stays white; no artificial hue is introduced.
         return new PlayerPalette(average(sums[first]), vibrant, vibrantSecondary);
     }
     private static int selectVivid(double[][] buckets, int total, int differentFrom) {
