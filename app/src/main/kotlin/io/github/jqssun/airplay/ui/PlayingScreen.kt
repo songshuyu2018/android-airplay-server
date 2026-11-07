@@ -25,6 +25,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -50,6 +51,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.*
+import kotlin.random.Random
 
 private data class PlayerColors(val base: Color, val glow: Color, val secondaryGlow: Color,
     val ink: Color, val body: Color, val accent: Color)
@@ -89,6 +91,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     val lifecycle = (activity as? LifecycleOwner)?.lifecycle
     val angle = remember { mutableFloatStateOf(0f) }
     val spectrum = remember { mutableStateOf(FloatArray(48)) }
+    val lightEnergy = remember { mutableFloatStateOf(0f) }
     val displayCover by produceState<ImageBitmap?>(null, track.coverArt) {
         value = withContext(Dispatchers.Default) {
             track.coverArt?.let { source ->
@@ -133,6 +136,18 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             try {
                 while (isActive) {
                     val values = viewModel.audioSpectrum(latestPlaying)
+                    // Reuse the existing PCM spectrum. Low-pass the lower bands so
+                    // the broad light breathes gently instead of flashing on beats.
+                    if (latestPlaying && values.isNotEmpty()) {
+                        val count = minOf(16, values.size)
+                        var sum = 0f
+                        for (i in 0 until count) {
+                            val band = values[i]
+                            if (band.isFinite()) sum += band * band
+                        }
+                        val targetEnergy = sqrt(sum / count).coerceIn(0f, 1f)
+                        lightEnergy.floatValue += (targetEnergy - lightEnergy.floatValue) * .06f
+                    }
                     val old = spectrum.value
                     spectrum.value = FloatArray(48) { i ->
                         val target = if (latestPlaying) values.getOrElse(i) { 0f } else 0f
@@ -147,7 +162,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         val compact = maxHeight < 440.dp
         val edge = if (compact) 20.dp else 40.dp
         val topGap = if (compact) 56.dp else 88.dp
-        PlayerBackdrop(colors)
+        PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue })
         Row(Modifier.fillMaxSize().padding(horizontal = edge).padding(top = topGap, bottom = if (compact) 18.dp else 40.dp), verticalAlignment = Alignment.CenterVertically) {
             BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
                 val discSize = minOf(maxWidth, maxHeight)
@@ -186,15 +201,109 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     }
 }
 
+private data class LightKey(
+    val x: Float, val y: Float, val scaleX: Float, val scaleY: Float, val opacity: Float
+)
+
+/** Random keyframes are allocated only once every 18–32 seconds, never per frame. */
+private class LightDrift {
+    private fun key() = LightKey(
+        Random.nextFloat() * .15f - .075f,
+        Random.nextFloat() * .20f - .10f,
+        1.3f + Random.nextFloat() * .25f,
+        1.3f + Random.nextFloat() * .25f,
+        .68f + Random.nextFloat() * .32f
+    )
+    private var from = key()
+    private var to = key()
+    private var elapsed = 0f
+    private var duration = 18f + Random.nextFloat() * 14f
+    var x = from.x
+        private set
+    var y = from.y
+        private set
+    var scaleX = from.scaleX
+        private set
+    var scaleY = from.scaleY
+        private set
+    var opacity = from.opacity
+        private set
+
+    fun advance(seconds: Float) {
+        elapsed += seconds
+        if (elapsed >= duration) {
+            elapsed -= duration
+            from = to
+            to = key()
+            duration = 18f + Random.nextFloat() * 14f
+        }
+        val t = (elapsed / duration).coerceIn(0f, 1f)
+        // Zero velocity and acceleration at each boundary: no abrupt direction changes.
+        val eased = t * t * t * (t * (t * 6f - 15f) + 10f)
+        x = from.x + (to.x - from.x) * eased
+        y = from.y + (to.y - from.y) * eased
+        scaleX = from.scaleX + (to.scaleX - from.scaleX) * eased
+        scaleY = from.scaleY + (to.scaleY - from.scaleY) * eased
+        opacity = from.opacity + (to.opacity - from.opacity) * eased
+    }
+}
+
 @Composable
-private fun PlayerBackdrop(colors: PlayerColors) {
-    Box(Modifier.fillMaxSize().drawWithCache {
-        val base = Brush.linearGradient(listOf(colors.base, colors.secondaryGlow, colors.base), end = Offset(size.width, size.height))
-        val left = Brush.radialGradient(listOf(colors.glow.copy(alpha = .95f), Color.Transparent), center = Offset(size.width * .18f, size.height * .34f), radius = size.width * .75f)
-        val right = Brush.radialGradient(listOf(colors.secondaryGlow.copy(alpha = .85f), Color.Transparent), center = Offset(size.width * .92f, size.height * .12f), radius = size.width * .58f)
-        val bottom = Brush.radialGradient(listOf(colors.glow.copy(alpha = .48f), Color.Transparent), center = Offset(size.width * .64f, size.height * 1.1f), radius = size.width * .64f)
-        onDrawBehind { drawRect(base); drawRect(left); drawRect(right); drawRect(bottom) }
-    })
+private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Lifecycle?, energy: () -> Float) {
+    val lights = remember { Array(3) { LightDrift() } }
+    val frame = remember { mutableLongStateOf(0L) }
+    LaunchedEffect(playing, lifecycle) {
+        if (playing) lifecycle?.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            var previous = 0L
+            while (isActive) withFrameNanos { now ->
+                if (previous != 0L) {
+                    // Lifecycle/pause cancels this clock. Bound any delayed frame too,
+                    // so resuming or a busy device never jumps the light across the screen.
+                    val seconds = ((now - previous) / 1e9f).coerceIn(0f, .1f)
+                    for (light in lights) light.advance(seconds)
+                    frame.longValue++
+                }
+                previous = now
+            }
+        }
+    }
+    Box(Modifier.fillMaxSize().clipToBounds()) {
+        Box(Modifier.fillMaxSize().graphicsLayer().drawWithCache {
+            val base = Brush.linearGradient(listOf(colors.base, colors.secondaryGlow, colors.base),
+                end = Offset(size.width, size.height))
+            onDrawBehind { drawRect(base) }
+        })
+        for (index in lights.indices) {
+            val light = lights[index]
+            Box(Modifier.fillMaxSize().graphicsLayer {
+                // Read animation state only here: update layer properties without
+                // recomposing the player or rebuilding its cached gradient shaders.
+                frame.longValue
+                translationX = light.x * size.width
+                translationY = light.y * size.height
+                scaleX = light.scaleX
+                scaleY = light.scaleY
+                alpha = light.opacity * (.78f + energy() * .18f)
+                compositingStrategy = CompositingStrategy.ModulateAlpha
+            }.drawWithCache {
+                val color = when (index) {
+                    0 -> colors.glow.copy(alpha = .95f)
+                    1 -> colors.secondaryGlow.copy(alpha = .85f)
+                    else -> lerp(colors.glow, colors.secondaryGlow, .35f).copy(alpha = .65f)
+                }
+                val center = when (index) {
+                    0 -> Offset(size.width * .18f, size.height * .34f)
+                    1 -> Offset(size.width * .92f, size.height * .12f)
+                    else -> Offset(size.width * .64f, size.height * 1.1f)
+                }
+                val radius = size.width * when (index) { 0 -> .75f; 1 -> .58f; else -> .64f }
+                val glow = Brush.radialGradient(listOf(color, color.copy(alpha = 0f)), center, radius)
+                // Oversized layers keep every moving rectangle edge outside the viewport.
+                // The radial falloff supplies softness without live blur or bitmap buffers.
+                onDrawBehind { drawRect(glow) }
+            })
+        }
+    }
 }
 
 @Composable
