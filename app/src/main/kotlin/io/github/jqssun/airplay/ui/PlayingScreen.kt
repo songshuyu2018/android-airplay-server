@@ -41,7 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import io.github.jqssun.airplay.R
 import io.github.jqssun.airplay.viewmodel.MainViewModel
@@ -77,6 +77,23 @@ private fun animatedColors(target: PlayerColors): PlayerColors {
 
 @Composable
 fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
+    val activity = LocalContext.current as? Activity
+    DisposableEffect(activity, viewModel) {
+        viewModel.setPlayerPageVisible(true)
+        val previous = activity?.requestedOrientation
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        onDispose {
+            viewModel.setPlayerPageVisible(false)
+            if (previous != null) activity?.requestedOrientation = previous
+        }
+    }
+    BackHandler(onBack = onBack)
+    PlayerContent(viewModel, onBack)
+}
+
+@Composable
+fun PlayerContent(viewModel: PlayerSource, onBack: () -> Unit,
+    backDescription: String = stringResource(R.string.player_back)) {
     val track by viewModel.trackInfo.collectAsState()
     val connections by viewModel.connectionCount.collectAsState()
     val audioOnly by viewModel.audioOnly.collectAsState()
@@ -85,8 +102,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     val connected = connections > 0 && audioOnly
     val playing = connected && reportedPlaying
     val latestPlaying by rememberUpdatedState(playing)
-    val activity = LocalContext.current as? Activity
-    val lifecycle = (activity as? LifecycleOwner)?.lifecycle
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     val angle = remember { mutableFloatStateOf(0f) }
     val spectrum = remember { mutableStateOf(FloatArray(48)) }
     val displayCover by produceState<ImageBitmap?>(null, track.coverArt) {
@@ -104,20 +120,14 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     val colors = animatedColors(targetColors)
     val playFocus = remember { FocusRequester() }
     LaunchedEffect(track.coverArt) { targetColors = withContext(Dispatchers.Default) { coverColors(track.coverArt) } }
-    DisposableEffect(activity) {
-        val previous = activity?.requestedOrientation
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        onDispose {
-            if (previous != null) activity?.requestedOrientation = previous
-            viewModel.audioSpectrum(false)
-        }
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.audioSpectrum(false) }
     }
-    BackHandler(onBack = onBack)
     LaunchedEffect(controlsReady) { if (controlsReady) playFocus.requestFocusUntilLanded() }
     // Rotation only changes a hardware layer property. No FFT, allocation or layout
     // work is performed in its vsync callback; pausing retains the current angle.
     LaunchedEffect(playing, lifecycle) {
-        if (playing) lifecycle?.repeatOnLifecycle(Lifecycle.State.STARTED) {
+        if (playing) lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             var previous = 0L
             while (isActive) withFrameNanos { now ->
                 if (previous != 0L) angle.floatValue =
@@ -129,7 +139,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     // Spectrum polling has its own lower cadence. JNI stays on the main thread so
     // receiver teardown cannot invalidate its handle during a background FFT call.
     LaunchedEffect(viewModel, lifecycle) {
-        lifecycle?.repeatOnLifecycle(Lifecycle.State.STARTED) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             try {
                 while (isActive) {
                     val values = viewModel.audioSpectrum(latestPlaying)
@@ -179,7 +189,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         }
         Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)).padding(horizontal = edge, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             IconButton(onClick = onBack, modifier = Modifier.size(48.dp).focusRing(color = colors.accent)) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.player_back), tint = colors.accent)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, backDescription, tint = colors.accent)
             }
             Text("AIRPLAY · 沉浸聆听", color = colors.body, fontSize = 12.sp, fontWeight = FontWeight.Light, letterSpacing = 1.5.sp)
         }
@@ -309,7 +319,7 @@ private fun playerTime(ms: Long): String {
 }
 
 @Composable
-private fun PlayerProgress(viewModel: MainViewModel, accent: Color) {
+private fun PlayerProgress(viewModel: PlayerSource, accent: Color) {
     // Progress ticks only recompose this small subtree, not the record/backdrop.
     val position by viewModel.audioPositionMs.collectAsState()
     val duration by viewModel.audioDurationMs.collectAsState()

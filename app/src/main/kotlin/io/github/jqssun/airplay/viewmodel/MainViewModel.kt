@@ -76,11 +76,16 @@ data class DebugInfo(
 }
 
 @HiltViewModel
-class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app) {
+class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app), io.github.jqssun.airplay.ui.PlayerSource {
 
     private val prefs = app.getSharedPreferences(Prefs.NAME, Context.MODE_PRIVATE)
     private val logFile = File(app.filesDir, "airplay_logs.txt")
     private var service: AirPlayService? = null
+    private var playerPageVisible = false
+    fun setPlayerPageVisible(visible: Boolean) {
+        playerPageVisible = visible
+        service?.playerPageVisible = visible
+    }
     val dacpPlayer: Player? get() = service?.dacpPlayer
 
     fun audioScanBegin(forward: Boolean) {
@@ -98,7 +103,7 @@ class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app
     val serverState: StateFlow<ServerState> = _serverState.asStateFlow()
 
     private val _connectionCount = MutableStateFlow(0)
-    val connectionCount: StateFlow<Int> = _connectionCount.asStateFlow()
+    override val connectionCount: StateFlow<Int> = _connectionCount.asStateFlow()
 
     private val _pinCode = MutableStateFlow<String?>(null)
     val pinCode: StateFlow<String?> = _pinCode.asStateFlow()
@@ -127,7 +132,7 @@ class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app
 
     // audio mode
     private val _audioOnly = MutableStateFlow(false)
-    val audioOnly: StateFlow<Boolean> = _audioOnly.asStateFlow()
+    override val audioOnly: StateFlow<Boolean> = _audioOnly.asStateFlow()
 
     private val _videoPlaybackActive = MutableStateFlow(false)
     val videoPlaybackActive: StateFlow<Boolean> = _videoPlaybackActive.asStateFlow()
@@ -189,21 +194,21 @@ class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app
     val mirroringActive: StateFlow<Boolean> = _mirroringActive.asStateFlow()
 
     private val _trackInfo = MutableStateFlow(TrackInfo())
-    val trackInfo: StateFlow<TrackInfo> = _trackInfo.asStateFlow()
+    override val trackInfo: StateFlow<TrackInfo> = _trackInfo.asStateFlow()
 
 
     private val _audioPlaying = MutableStateFlow(false)
-    val audioPlaying = _audioPlaying.asStateFlow()
+    override val audioPlaying = _audioPlaying.asStateFlow()
     private val _audioPositionMs = MutableStateFlow(0L)
-    val audioPositionMs = _audioPositionMs.asStateFlow()
+    override val audioPositionMs = _audioPositionMs.asStateFlow()
     private val _audioDurationMs = MutableStateFlow(0L)
-    val audioDurationMs = _audioDurationMs.asStateFlow()
+    override val audioDurationMs = _audioDurationMs.asStateFlow()
     private val _audioControlsReady = MutableStateFlow(false)
-    val audioControlsReady = _audioControlsReady.asStateFlow()
-    fun toggleAudioPlayback() { service?.togglePlayPause() }
-    fun previousAudioTrack() { service?.dacpController?.prevItem() }
-    fun nextAudioTrack() { service?.dacpController?.nextItem() }
-    fun audioSpectrum(enabled: Boolean) = service?.audioSpectrum(enabled) ?: FloatArray(48)
+    override val audioControlsReady = _audioControlsReady.asStateFlow()
+    override fun toggleAudioPlayback() { service?.togglePlayPause() }
+    override fun previousAudioTrack() { service?.dacpController?.prevItem() }
+    override fun nextAudioTrack() { service?.dacpController?.nextItem() }
+    override fun audioSpectrum(enabled: Boolean) = service?.audioSpectrum(enabled) ?: FloatArray(48)
 
     // logs
     private val _logs = MutableStateFlow<List<String>>(emptyList())
@@ -274,6 +279,7 @@ class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app
     // service binding
     fun bindService(svc: AirPlayService) {
         service = svc
+        svc.playerPageVisible = playerPageVisible
         updateFromService()
     }
 

@@ -116,8 +116,8 @@
     <string name="setting_alac_desc">Offer ALAC in the mDNS record; used for music streaming</string>
     <string name="setting_aac">Advertise AAC codec</string>
     <string name="setting_aac_desc">Offer AAC-ELD/AAC-LC in the mDNS record; used for screen mirroring audio</string>
-    <string name="setting_launch_on_connect">Open this application on connect</string>
-    <string name="setting_launch_on_connect_desc">Show the screen when a sender connects</string>
+    <string name="setting_launch_on_connect">Show playback automatically on connect</string>
+    <string name="setting_launch_on_connect_desc">Show an overlay for music; open the app for screen mirroring</string>
     <string name="setting_launch_on_connect_no_permission">Tap to grant Display over other apps permission</string>
     <string name="setting_discovery">Discoverable over</string>
     <string name="setting_discovery_all_desc">Advertise on all usable interfaces. Uses NsdManager.</string>
@@ -209,6 +209,7 @@
     <string name="player_waiting">Waiting for music</string>
     <string name="player_playing">Playing</string>
     <string name="player_paused">Paused</string>
+    <string name="player_close">Close player</string>
     <string name="player_back">Back to Overview</string>
     <string name="player_previous">Previous track</string>
     <string name="player_next">Next track</string>
