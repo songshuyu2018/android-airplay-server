@@ -54,8 +54,10 @@ import kotlin.math.*
 import kotlin.random.Random
 
 private data class PlayerColors(val base: Color, val glow: Color, val secondaryGlow: Color,
+    val vibrantGlow: Color, val vibrantSecondaryGlow: Color,
     val ink: Color, val body: Color, val accent: Color)
-private fun PlayerPalette.colors() = PlayerColors(Color(base), Color(glow), Color(secondaryGlow), Color(ink), Color(body), Color(accent))
+private fun PlayerPalette.colors() = PlayerColors(Color(base), Color(glow), Color(secondaryGlow),
+    Color(vibrantGlow), Color(vibrantSecondaryGlow), Color(ink), Color(body), Color(accent))
 private val DefaultPlayerColors = PlayerPalette.fromPixels(intArrayOf()).colors()
 private fun coverColors(bitmap: Bitmap?): PlayerColors {
     if (bitmap == null) return DefaultPlayerColors
@@ -71,10 +73,12 @@ private fun animatedColors(target: PlayerColors): PlayerColors {
     val base by animateColorAsState(target.base, tween(600), label = "player base")
     val glow by animateColorAsState(target.glow, tween(600), label = "player glow")
     val secondary by animateColorAsState(target.secondaryGlow, tween(600), label = "player secondary")
+    val vibrant by animateColorAsState(target.vibrantGlow, tween(600), label = "player vibrant glow")
+    val vibrantSecondary by animateColorAsState(target.vibrantSecondaryGlow, tween(600), label = "player vibrant secondary")
     val ink by animateColorAsState(target.ink, tween(600), label = "player ink")
     val body by animateColorAsState(target.body, tween(600), label = "player body")
     val accent by animateColorAsState(target.accent, tween(600), label = "player accent")
-    return PlayerColors(base, glow, secondary, ink, body, accent)
+    return PlayerColors(base, glow, secondary, vibrant, vibrantSecondary, ink, body, accent)
 }
 
 @Composable
@@ -287,9 +291,9 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
                 compositingStrategy = CompositingStrategy.ModulateAlpha
             }.drawWithCache {
                 val color = when (index) {
-                    0 -> colors.glow.copy(alpha = .95f)
-                    1 -> colors.secondaryGlow.copy(alpha = .85f)
-                    else -> lerp(colors.glow, colors.secondaryGlow, .35f).copy(alpha = .65f)
+                    0 -> colors.vibrantGlow.copy(alpha = .95f)
+                    1 -> colors.vibrantSecondaryGlow.copy(alpha = .85f)
+                    else -> lerp(colors.vibrantGlow, colors.vibrantSecondaryGlow, .35f).copy(alpha = .65f)
                 }
                 val center = when (index) {
                     0 -> Offset(size.width * .18f, size.height * .34f)
@@ -303,6 +307,25 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
                 onDrawBehind { drawRect(glow) }
             })
         }
+        // Colorful light stays vivid around the record. Protect the right-hand
+        // reading column and header independently rather than whitening every glow.
+        // Both veils are cached; the 70% white floor is checked by PlayerPalette.
+        Box(Modifier.fillMaxSize().graphicsLayer().drawWithCache {
+            val rightStart = size.width * .4f
+            val rightWash = Brush.horizontalGradient(listOf(Color.White.copy(alpha = 0f), Color.White.copy(alpha = .70f)),
+                startX = rightStart, endX = size.width * .5f)
+            val headerHeight = minOf(size.height, 128.dp.toPx())
+            val headerWash = Brush.verticalGradient(
+                0f to Color.White.copy(alpha = .72f),
+                .75f to Color.White.copy(alpha = .72f),
+                1f to Color.White.copy(alpha = 0f), endY = headerHeight)
+            val rightSize = Size(size.width - rightStart, size.height)
+            val headerSize = Size(size.width, headerHeight)
+            onDrawBehind {
+                drawRect(rightWash, topLeft = Offset(rightStart, 0f), size = rightSize)
+                drawRect(headerWash, size = headerSize)
+            }
+        })
     }
 }
 

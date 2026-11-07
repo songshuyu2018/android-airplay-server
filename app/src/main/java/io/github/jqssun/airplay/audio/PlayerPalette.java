@@ -2,12 +2,16 @@ package io.github.jqssun.airplay.audio;
 
 /** Album-derived light surfaces and independently contrast-checked foreground roles. */
 public final class PlayerPalette {
-    public final int base, glow, secondaryGlow, ink, body, accent;
-    private PlayerPalette(int seed, int secondary) {
+    public final int base, glow, secondaryGlow, vibrantGlow, vibrantSecondaryGlow, ink, body, accent;
+    // A 70% white reading veil bounds the darkest background behind text/icons.
+    private static final int READING_FLOOR = 0xffb2b2b2;
+    private PlayerPalette(int seed, int secondary, int vibrant, int vibrantSecondary) {
         base = mix(seed, 0xffffffff, .88);
         glow = mix(seed, 0xffffffff, .68);
         secondaryGlow = mix(secondary, 0xffffffff, .72);
-        int[] backgrounds = {base, glow, secondaryGlow};
+        vibrantGlow = vibrant;
+        vibrantSecondaryGlow = vibrantSecondary;
+        int[] backgrounds = {base, glow, secondaryGlow, READING_FLOOR};
         ink = ensureContrast(mix(seed, 0xff000000, .58), backgrounds, 8);
         body = ensureContrast(mix(seed, 0xff000000, .30), backgrounds, 5);
         accent = ensureContrast(seed, backgrounds, 4);
@@ -15,8 +19,11 @@ public final class PlayerPalette {
     public static PlayerPalette fromPixels(int[] pixels) {
         // Hue and brightness buckets keep white borders from washing out an album's colors.
         double[][] sums = new double[100][5];
+        double[][] vivid = new double[96][5];
+        int opaquePixels = 0;
         for (int p : pixels) {
             if ((p >>> 24) < 128) continue;
+            opaquePixels++;
             double r = (p >> 16 & 255) / 255., g = (p >> 8 & 255) / 255., b = (p & 255) / 255.;
             double max = Math.max(r, Math.max(g, b)), min = Math.min(r, Math.min(g, b));
             double delta = max - min, saturation = max == 0 ? 0 : delta / max;
@@ -29,6 +36,13 @@ public final class PlayerPalette {
             int bucket = saturation < .08 ? 96 + Math.min(3, (int)(max * 4)) : Math.min(23, (int)(hue * 4)) * 4 + Math.min(3, (int)(max * 4));
             double weight = (.15 + saturation * .85) * (max > .93 ? .25 : 1);
             double[] s = sums[bucket]; s[0] += r * weight; s[1] += g * weight; s[2] += b * weight; s[3] += weight; s[4]++;
+            // Vivid accents have a separate population: neutral borders/shadows cannot
+            // dilute them, and bright saturated colors are not mistaken for white.
+            if (saturation >= .4 && max >= .28 && delta >= .18) {
+                double w = saturation * saturation * saturation * (.35 + .65 * max);
+                double[] v = vivid[bucket];
+                v[0] += r * w; v[1] += g * w; v[2] += b * w; v[3] += w; v[4]++;
+            }
         }
         int first = -1;
         double score = 0;
@@ -36,7 +50,7 @@ public final class PlayerPalette {
             double candidate = sums[i][3] / Math.pow(Math.max(1, sums[i][4]), .2);
             if (candidate > score) {score = candidate; first = i;}
         }
-        if (first < 0) return new PlayerPalette(0xff8b5f83, 0xff776d99);
+        if (first < 0) return new PlayerPalette(0xff8b5f83, 0xff776d99, 0xff8b5f83, 0xff776d99);
         int second = first; score = 0;
         for (int i = 0; i < 96; i++) {
             int distance = Math.abs(i / 4 - first / 4);
@@ -44,7 +58,36 @@ public final class PlayerPalette {
             double candidate = sums[i][3] / Math.pow(Math.max(1, sums[i][4]), .2);
             if (candidate > score) {score = candidate; second = i;}
         }
-        return new PlayerPalette(average(sums[first]), average(sums[second]));
+        int vividFirst = selectVivid(vivid, opaquePixels, -1);
+        int vividSecond = vividFirst < 0 ? -1 : selectVivid(vivid, opaquePixels, vividFirst);
+        int vibrant = vividFirst < 0 ? average(sums[first]) : brighten(average(vivid[vividFirst]));
+        int vibrantSecondary = vividSecond < 0 ? vibrant : brighten(average(vivid[vividSecond]));
+        return new PlayerPalette(average(sums[first]), average(sums[second]), vibrant, vibrantSecondary);
+    }
+    private static int selectVivid(double[][] buckets, int total, int differentFrom) {
+        int best = -1;
+        double bestScore = 0;
+        int minimumArea = Math.max(2, (int)Math.ceil(total * .012));
+        for (int i = 0; i < buckets.length; i++) {
+            double[] s = buckets[i];
+            if (s[4] < minimumArea) continue; // Ignore isolated colored compression noise.
+            if (differentFrom >= 0) {
+                int distance = Math.abs(i / 4 - differentFrom / 4);
+                if (Math.min(distance, 24 - distance) < 3) continue;
+            }
+            // Colorfulness outweighs sheer area, so a modest vivid accent can beat
+            // a large muted region without selecting a single stray pixel.
+            double score = s[3] / Math.pow(s[4], .65);
+            if (score > bestScore) {bestScore = score; best = i;}
+        }
+        return best;
+    }
+    private static int brighten(int color) {
+        int r = color >> 16 & 255, g = color >> 8 & 255, b = color & 255;
+        int max = Math.max(r, Math.max(g, b));
+        if (max >= 235 || max == 0) return color;
+        // Lift dark colorful accents without adding white or changing their hue.
+        return rgb((r * 235 + max / 2) / max, (g * 235 + max / 2) / max, (b * 235 + max / 2) / max);
     }
     private static int average(double[] s) {
         return rgb((int)Math.round(s[0] / s[3] * 255), (int)Math.round(s[1] / s[3] * 255), (int)Math.round(s[2] / s[3] * 255));
