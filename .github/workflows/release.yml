@@ -22,6 +22,12 @@ jobs:
           java-version: "21"
           cache: "gradle"
 
+      - name: Test audio session ownership
+        run: |
+          mkdir -p /tmp/session-tests
+          javac -d /tmp/session-tests app/src/main/java/io/github/jqssun/airplay/audio/AudioSessionGate.java tests/session/AudioSessionGateTest.java
+          java -cp /tmp/session-tests AudioSessionGateTest
+
       - name: Build release APK
         run: |
           export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)

@@ -643,6 +643,8 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     }
 
     private fun _shutdown() {
+        audioSessionGate.reset()
+        earlySessionEvents.clear()
         _mainHandler.removeCallbacks(audioPauseAfterFlush)
         _mainHandler.removeCallbacks(_endSessionRunnable)
         audioRenderer.detachEngine()
@@ -910,6 +912,84 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         if (_clientVolTarget >= 0f) Log.d(TAG, "sender volume drive done: sender $_clientVol, target $_clientVolTarget")
         _clientVolTarget = -1f
         _clientVolDir = 0
+    }
+
+    private val audioSessionGate = io.github.jqssun.airplay.audio.AudioSessionGate()
+    private data class SessionEvent(val id: Long, val kind: Int, val data: ByteArray?,
+        val a: Long, val b: Long, val c: Long, val first: String?, val second: String?)
+    private val earlySessionEvents = mutableMapOf<Long, ArrayDeque<SessionEvent>>()
+
+    override fun onSessionEvent(sessionId: Long, event: Int, data: ByteArray?, a: Long,
+        b: Long, c: Long, first: String?, second: String?) {
+        val message = SessionEvent(sessionId, event, data, a, b, c, first, second)
+        _mainHandler.post { handleSessionEvent(message) }
+    }
+
+    private fun handleSessionEvent(e: SessionEvent) {
+        if (_serverState.value != ServerState.RUNNING) return
+        when (e.kind) {
+            1 -> {
+                audioSessionGate.connected(e.id)
+                if (audioSessionGate.newestId() == 0L) onConnectionInit()
+                return
+            }
+            2 -> {
+                earlySessionEvents.remove(e.id)
+                if (audioSessionGate.closed(e.id)) {
+                    _mainHandler.removeCallbacks(audioPauseAfterFlush)
+                    _mainHandler.postDelayed({
+                        if (audioSessionGate.activeId() == 0L && audioSessionGate.newestId() == e.id) {
+                            _connectionCount.value = 0
+                            endSession()
+                        }
+                    }, SESSION_END_GRACE_MS)
+                } else if (audioSessionGate.newestId() == 0L) onConnectionDestroy()
+                return
+            }
+            3 -> {
+                val previous = audioSessionGate.activeId()
+                if (!audioSessionGate.activate(e.id)) return
+                _mainHandler.removeCallbacks(_endSessionRunnable)
+                _mainHandler.removeCallbacks(audioPauseAfterFlush)
+                if (previous != e.id) {
+                    _lastFlushAt = 0L
+                    _trackStartRtp = -1L
+                    _progressBaseTime = 0L
+                    _progressBaseFrames = -1L
+                    _positionMs.value = 0L
+                    _durationMs.value = 0L
+                    _trackInfo.value = TrackInfo()
+                    _coverArtBytes = null
+                    dacpController?.reset()
+                    log("Audio session ${e.id} acquired (previous $previous)")
+                }
+                _connectionCount.value = 1
+                onAudioFormat(e.a.toInt(), e.b.toInt(), e.c != 0L)
+                val pending = earlySessionEvents.remove(e.id)
+                earlySessionEvents.keys.removeAll { it < e.id }
+                pending?.forEach { handleSessionEvent(it) }
+                return
+            }
+        }
+        if (!audioSessionGate.accepts(e.id)) {
+            // RTP can report metadata before the RTSP thread reports its format.
+            if (audioSessionGate.mayActivate(e.id) && e.kind in 7..11) {
+                val pending = earlySessionEvents.getOrPut(e.id) { ArrayDeque() }
+                if (pending.size == 12) pending.removeFirst()
+                pending.addLast(e)
+            }
+            return
+        }
+        when (e.kind) {
+            4 -> onAudioResume()
+            5 -> onAudioFlush()
+            6 -> onAudioTeardown()
+            7 -> e.data?.let { onMetadata(it) }
+            8 -> e.data?.let { onCoverArt(it) }
+            9 -> onProgress(e.a, e.b, e.c)
+            10 -> onDacpId(e.first.orEmpty(), e.second.orEmpty())
+            11 -> onClientVolume(e.a.toFloat() / 1000f)
+        }
     }
 
     override fun onConnectionInit() {

@@ -1,6 +1,8 @@
 package io.github.jqssun.airplay.bridge
 
 interface RaopCallbackHandler {
+    fun onSessionEvent(sessionId: Long, event: Int, data: ByteArray?, a: Long, b: Long, c: Long, first: String?, second: String?)
+
     fun onVideoData(data: ByteArray, ntpTimeNs: Long, isH265: Boolean)
     fun onAudioFormat(ct: Int, spf: Int, usingScreen: Boolean)
     fun onVideoSize(srcW: Float, srcH: Float, w: Float, h: Float)

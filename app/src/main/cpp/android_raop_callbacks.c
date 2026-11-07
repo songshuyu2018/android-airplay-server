@@ -30,6 +30,17 @@ static JNIEnv *_get_env(android_callback_ctx_t *ctx) {
     return env;
 }
 
+/* Set only by the originating RTSP/RTP thread; never a global current-session guess. */
+static __thread uint64_t callback_session_id;
+static void _session_enter(void *cls, uint64_t id) { (void)cls; callback_session_id = id; }
+static void _session_event(android_callback_ctx_t *ctx, int event, jbyteArray data,
+                           jlong a, jlong b, jlong c, jstring first, jstring second) {
+    JNIEnv *env = _get_env(ctx);
+    if (env && ctx->callback_obj)
+        (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_session_event,
+                              (jlong)callback_session_id, (jint)event, data, a, b, c, first, second);
+}
+
 void android_callbacks_init(android_callback_ctx_t *ctx, JNIEnv *env, jobject callback_obj) {
     (*env)->GetJavaVM(env, &ctx->jvm);
     ctx->callback_obj = (*env)->NewGlobalRef(env, callback_obj);
@@ -37,6 +48,8 @@ void android_callbacks_init(android_callback_ctx_t *ctx, JNIEnv *env, jobject ca
     ctx->require_pin = 0;
     ctx->registered_count = 0;
     ctx->audio_engine = NULL;
+    ctx->active_audio_session = 0;
+    pthread_mutex_init(&ctx->audio_session_lock, NULL);
     ctx->last_audio_activity_ns = 0;
     memset(ctx->registered_keys, 0, sizeof(ctx->registered_keys));
 
@@ -50,6 +63,7 @@ void android_callbacks_init(android_callback_ctx_t *ctx, JNIEnv *env, jobject ca
     ctx->playback_ready = 0;
 
     jclass cls = (*env)->GetObjectClass(env, callback_obj);
+    ctx->on_session_event = (*env)->GetMethodID(env, cls, "onSessionEvent", "(JI[BJJJLjava/lang/String;Ljava/lang/String;)V");
     ctx->on_video_data = (*env)->GetMethodID(env, cls, "onVideoData", "([BJZ)V");
     ctx->on_audio_format = (*env)->GetMethodID(env, cls, "onAudioFormat", "(IIZ)V");
     ctx->on_video_size = (*env)->GetMethodID(env, cls, "onVideoSize", "(FFFF)V");
@@ -108,6 +122,11 @@ void android_callbacks_update_playback_info(android_callback_ctx_t *ctx, double 
 static void _audio_process(void *cls, raop_ntp_t *ntp, audio_decode_struct *data) {
     android_callback_ctx_t *ctx = (android_callback_ctx_t *)cls;
     if (!ctx->audio_engine || !data->data || data->data_len <= 0) return;
+    pthread_mutex_lock(&ctx->audio_session_lock);
+    if (callback_session_id && callback_session_id != ctx->active_audio_session) {
+        pthread_mutex_unlock(&ctx->audio_session_lock);
+        return;
+    }
     /* Report sustained packet activity, not just the first post-FLUSH packet.
      * Kotlin ignores the drain window; a one-shot notification is lost there. */
     struct timespec activity_time;
@@ -119,12 +138,14 @@ static void _audio_process(void *cls, raop_ntp_t *ntp, audio_decode_struct *data
                                     0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
         JNIEnv *env = _get_env(ctx);
         if (env && ctx->callback_obj && ctx->on_audio_resume)
-            (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_audio_resume);
+            if (callback_session_id) _session_event(ctx, 4, NULL, 0, 0, 0, NULL, NULL);
+            else (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_audio_resume);
     }
     __atomic_store_n(&ctx->last_rtp_time, (uint32_t)data->rtp_time, __ATOMIC_RELAXED);
     __atomic_store_n(&ctx->last_rtp_pts_ns, (uint64_t)data->ntp_time_local, __ATOMIC_RELAXED);
     audio_engine_decode(ctx->audio_engine, data->data, data->data_len,
                         (int)data->ct, (int64_t)data->ntp_time_local);
+    pthread_mutex_unlock(&ctx->audio_session_lock);
 }
 
 static void _video_process(void *cls, raop_ntp_t *ntp, video_decode_struct *data) {
@@ -157,14 +178,16 @@ static void _conn_init(void *cls) {
     pthread_mutex_unlock(&ctx->playback_info_lock);
     JNIEnv *env = _get_env(ctx);
     if (!env) return;
-    (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_conn_init);
+    if (callback_session_id) _session_event(ctx, 1, NULL, 0, 0, 0, NULL, NULL);
+            else (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_conn_init);
 }
 
 static void _conn_destroy(void *cls) {
     android_callback_ctx_t *ctx = (android_callback_ctx_t *)cls;
     JNIEnv *env = _get_env(ctx);
     if (!env) return;
-    (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_conn_destroy);
+    if (callback_session_id) _session_event(ctx, 2, NULL, 0, 0, 0, NULL, NULL);
+            else (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_conn_destroy);
 }
 
 static void _conn_reset(void *cls, int reason) {
@@ -178,7 +201,8 @@ static void _audio_set_volume(void *cls, float volume) {
     android_callback_ctx_t *ctx = (android_callback_ctx_t *)cls;
     JNIEnv *env = _get_env(ctx);
     if (!env) return;
-    (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_client_volume, (jfloat)volume);
+    if (callback_session_id) _session_event(ctx, 11, NULL, (jlong)(volume * 1000), 0, 0, NULL, NULL);
+    else (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_client_volume, (jfloat)volume);
 }
 
 static void _audio_get_format(void *cls, unsigned char *ct, unsigned short *spf,
@@ -186,7 +210,21 @@ static void _audio_get_format(void *cls, unsigned char *ct, unsigned short *spf,
     android_callback_ctx_t *ctx = (android_callback_ctx_t *)cls;
     JNIEnv *env = _get_env(ctx);
     if (!env) return;
-    (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_audio_format,
+    if (callback_session_id) {
+        pthread_mutex_lock(&ctx->audio_session_lock);
+        if (callback_session_id < ctx->active_audio_session) {
+            pthread_mutex_unlock(&ctx->audio_session_lock);
+            return;
+        }
+        if (ctx->active_audio_session != callback_session_id) {
+            __atomic_store_n(&ctx->last_audio_activity_ns, 0, __ATOMIC_RELAXED);
+        }
+        ctx->active_audio_session = callback_session_id;
+        __atomic_store_n(&ctx->last_rtp_time, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&ctx->last_rtp_pts_ns, 0, __ATOMIC_RELAXED);
+        pthread_mutex_unlock(&ctx->audio_session_lock);
+        _session_event(ctx, 3, NULL, *ct, *spf, *usingScreen, NULL, NULL);
+    } else (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_audio_format,
                            (jint)*ct, (jint)*spf, (jboolean)*usingScreen);
 }
 
@@ -245,7 +283,8 @@ static void _audio_flush(void *cls) {
     __atomic_store_n(&ctx->audio_resume_pending, 1, __ATOMIC_RELAXED);
     JNIEnv *env = _get_env(ctx);
     if (env && ctx->on_audio_flush)
-        (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_audio_flush);
+        if (callback_session_id) _session_event(ctx, 5, NULL, 0, 0, 0, NULL, NULL);
+            else (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_audio_flush);
 }
 
 static void _audio_stop_coverart_rendering(void *cls) {
@@ -253,7 +292,8 @@ static void _audio_stop_coverart_rendering(void *cls) {
     LOGI("audio_teardown");
     JNIEnv *env = _get_env(ctx);
     if (!env) return;
-    (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_audio_teardown);
+    if (callback_session_id) _session_event(ctx, 6, NULL, 0, 0, 0, NULL, NULL);
+            else (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_audio_teardown);
 }
 static void _video_flush(void *cls) { LOGI("video_flush"); }
 static double _audio_set_client_volume(void *cls) {
@@ -268,7 +308,8 @@ static void _audio_set_metadata(void *cls, const void *buf, int len) {
     if (!env || !buf || len <= 0) return;
     jbyteArray arr = (*env)->NewByteArray(env, len);
     (*env)->SetByteArrayRegion(env, arr, 0, len, (jbyte *)buf);
-    (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_metadata, arr);
+    if (callback_session_id) _session_event(ctx, 7, arr, 0, 0, 0, NULL, NULL);
+    else (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_metadata, arr);
     (*env)->DeleteLocalRef(env, arr);
 }
 
@@ -278,7 +319,8 @@ static void _audio_set_coverart(void *cls, const void *buf, int len) {
     if (!env || !buf || len <= 0) return;
     jbyteArray arr = (*env)->NewByteArray(env, len);
     (*env)->SetByteArrayRegion(env, arr, 0, len, (jbyte *)buf);
-    (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_coverart, arr);
+    if (callback_session_id) _session_event(ctx, 8, arr, 0, 0, 0, NULL, NULL);
+    else (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_coverart, arr);
     (*env)->DeleteLocalRef(env, arr);
 }
 
@@ -288,7 +330,8 @@ static void _audio_remote_control_id(void *cls, const char *dacp_id, const char 
     if (!env) return;
     jstring jdacp = (*env)->NewStringUTF(env, dacp_id ? dacp_id : "");
     jstring jremote = (*env)->NewStringUTF(env, active_remote ? active_remote : "");
-    (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_dacp_id, jdacp, jremote);
+    if (callback_session_id) _session_event(ctx, 10, NULL, 0, 0, 0, jdacp, jremote);
+    else (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_dacp_id, jdacp, jremote);
     (*env)->DeleteLocalRef(env, jdacp);
     (*env)->DeleteLocalRef(env, jremote);
 }
@@ -297,7 +340,8 @@ static void _audio_set_progress(void *cls, uint32_t *start, uint32_t *curr, uint
     android_callback_ctx_t *ctx = (android_callback_ctx_t *)cls;
     JNIEnv *env = _get_env(ctx);
     if (!env || !start || !curr || !end) return;
-    (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_progress,
+    if (callback_session_id) _session_event(ctx, 9, NULL, *start, *curr, *end, NULL, NULL);
+    else (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_progress,
                            (jlong)*start, (jlong)*curr, (jlong)*end);
 }
 
@@ -419,6 +463,7 @@ void android_callbacks_fill(raop_callbacks_t *cbs, android_callback_ctx_t *ctx) 
     memset(cbs, 0, sizeof(raop_callbacks_t));
     cbs->cls = ctx;
 
+    cbs->session_enter = _session_enter;
     cbs->audio_process = _audio_process;
     cbs->video_process = _video_process;
     cbs->video_pause = _video_pause;

@@ -1,0 +1,83 @@
+--- a/lib/raop.h
++++ b/lib/raop.h
+@@ -71,6 +71,8 @@
+ 
+ struct raop_callbacks_s {
+     void* cls;
++    uint64_t session_id;
++    void (*session_enter)(void *cls, uint64_t session_id);
+ 
+     void  (*audio_process)(void *cls, raop_ntp_t *ntp, audio_decode_struct *data);
+     void  (*video_process)(void *cls, raop_ntp_t *ntp, video_decode_struct *data);
+--- a/lib/raop.c
++++ b/lib/raop.c
+@@ -107,6 +107,7 @@
+ struct raop_conn_s {
+     raop_t *raop;
+     raop_ntp_t *raop_ntp;
++    raop_callbacks_t session_callbacks;
+     raop_rtp_t *raop_rtp;
+     raop_rtp_mirror_t *raop_rtp_mirror;
+     fairplay_t *fairplay;
+@@ -149,7 +150,12 @@
+     if (!conn) {
+         return NULL;
+     }
++    static uint64_t next_session_id = 0;
+     conn->raop = raop;
++    conn->session_callbacks = raop->callbacks;
++    conn->session_callbacks.session_id = __atomic_add_fetch(&next_session_id, 1, __ATOMIC_RELAXED);
++    if (raop->callbacks.session_enter)
++        raop->callbacks.session_enter(raop->callbacks.cls, conn->session_callbacks.session_id);
+     conn->raop_rtp = NULL;
+     conn->raop_rtp_mirror = NULL;
+     conn->raop_ntp = NULL;
+@@ -209,6 +215,8 @@
+     int response_datalen = 0;
+     raop_conn_t *conn = ptr;
+     raop_t *raop = conn->raop;
++    if (raop->callbacks.session_enter)
++        raop->callbacks.session_enter(raop->callbacks.cls, conn->session_callbacks.session_id);
+     bool hls_request = false;
+     logger_log(raop->logger, LOGGER_DEBUG, "conn_request");
+     bool logger_debug = (logger_get_level(raop->logger) >= LOGGER_DEBUG);
+@@ -573,6 +581,8 @@
+ conn_destroy(void *ptr) {
+     raop_conn_t *conn = ptr;
+     raop_t *raop = conn->raop;
++    if (raop->callbacks.session_enter)
++        raop->callbacks.session_enter(raop->callbacks.cls, conn->session_callbacks.session_id);
+     logger_log(raop->logger, LOGGER_DEBUG, "Destroying connection");
+ 
+     if (raop->video_play_conn == ptr) {
+--- a/lib/raop_handlers.h
++++ b/lib/raop_handlers.h
+@@ -808,7 +808,7 @@
+         }
+         if (!conn->raop_rtp) {
+             /* unencrypted RAOP stream: no AES key/IV */
+-            conn->raop_rtp = raop_rtp_init(raop->logger, &raop->callbacks, conn->raop_ntp,
++            conn->raop_rtp = raop_rtp_init(raop->logger, &conn->session_callbacks, conn->raop_ntp,
+                                            remote, conn->remotelen, NULL, NULL);
+         }
+         if (!conn->raop_rtp) {
+@@ -1165,7 +1165,7 @@
+         conn->raop_ntp = raop_ntp_init(raop->logger, &raop->callbacks, remote,
+                                        conn->remotelen, (unsigned short) timing_rport, &time_protocol);
+         raop_ntp_start(conn->raop_ntp, &timing_lport);
+-        conn->raop_rtp = raop_rtp_init(raop->logger, &raop->callbacks, conn->raop_ntp,
++        conn->raop_rtp = raop_rtp_init(raop->logger, &conn->session_callbacks, conn->raop_ntp,
+                                        remote, conn->remotelen,
+                                        has_fairplay_keys ? aeskey : NULL,
+                                        has_fairplay_keys ? aesiv : NULL);
+--- a/lib/raop_rtp.c
++++ b/lib/raop_rtp.c
+@@ -413,6 +413,8 @@
+         break;
+     }
+     
++    if (raop_rtp->callbacks.session_enter)
++        raop_rtp->callbacks.session_enter(raop_rtp->callbacks.cls, raop_rtp->callbacks.session_id);
+     while(1) {
+         fd_set rfds;
+         struct timeval tv;
