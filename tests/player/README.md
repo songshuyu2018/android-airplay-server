@@ -35,8 +35,10 @@ palette tests do not replace these Android rendering checks.
 
 ## Square displays
 
-Ratios below 1.3 use reduced margins/spacing and width-based title sizing (18–28sp).
-The details column reserves at least 160dp for 48/64/48dp transport buttons; gaps
-use only the space remaining in that column. The disc takes the remaining width.
-Check 320/360/480/600dp square displays with two-line titles and all three controls
-visible. Wider screens retain the two equal columns and their existing size caps.
+Ratios below 1.3 use compact margins and width-based title sizing (18–28sp).
+The two columns remain balanced. Transport buttons, their glyphs and gaps scale
+uniformly to the details column width; square screens cap that scale at 85%.
+The transport row opts out of Material's 48dp minimum layout size so it cannot
+force the scaled buttons beyond the column. Verify 320/360/480/600dp square screens
+with a two-line title and all three controls fully visible. The 4x ambient-light
+speed is retained.

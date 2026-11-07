@@ -165,9 +165,12 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         val topGap = if (compact) 56.dp else 88.dp
         val columnGap = if (square) 16.dp else if (compact) 24.dp else 52.dp
         val contentWidth = (maxWidth - edge * 2 - columnGap).coerceAtLeast(0.dp)
-        // Reserve the actual 48 + 64 + 48 dp transport width before sizing the disc.
-        val detailsWidth = maxOf(contentWidth / 2, 160.dp).coerceAtMost(contentWidth)
-        val controlGap = ((detailsWidth - 160.dp) / 2).coerceIn(0.dp, if (compact) 16.dp else 26.dp)
+        val detailsWidth = contentWidth / 2
+        // Scale the whole transport group, including icons and spacing, to fit.
+        val naturalControlWidth = if (compact) 192f else 212f
+        val controlScale = minOf(1f, detailsWidth.value / naturalControlWidth,
+            if (square) .85f else 1f).coerceAtLeast(.01f)
+        val controlGap = (if (compact) 16.dp else 26.dp) * controlScale
         val titleSize = minOf(if (square) 28f else if (compact) 27f else 40f,
             detailsWidth.value * .12f).coerceAtLeast(18f).sp
         PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue })
@@ -191,12 +194,14 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                 Spacer(Modifier.height(if (compact) 20.dp else 34.dp))
                 PlayerProgress(viewModel, colors.body)
                 Spacer(Modifier.height(if (compact) 10.dp else 20.dp))
+                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(controlGap)) {
-                    PlayerButton(TransportGlyph.Previous, stringResource(R.string.player_previous), controlsReady && connected, colors.ink, onClick = viewModel::previousAudioTrack)
+                    PlayerButton(TransportGlyph.Previous, stringResource(R.string.player_previous), controlsReady && connected, colors.ink, scale = controlScale, onClick = viewModel::previousAudioTrack)
                     PlayerButton(if (playing) TransportGlyph.Pause else TransportGlyph.Play,
                         stringResource(if (playing) R.string.player_pause else R.string.player_play), controlsReady && connected, colors.ink,
-                        primary = true, onPrimary = colors.base, modifier = Modifier.focusRequester(playFocus), onClick = viewModel::toggleAudioPlayback)
-                    PlayerButton(TransportGlyph.Next, stringResource(R.string.player_next), controlsReady && connected, colors.ink, onClick = viewModel::nextAudioTrack)
+                        primary = true, scale = controlScale, onPrimary = colors.base, modifier = Modifier.focusRequester(playFocus), onClick = viewModel::toggleAudioPlayback)
+                    PlayerButton(TransportGlyph.Next, stringResource(R.string.player_next), controlsReady && connected, colors.ink, scale = controlScale, onClick = viewModel::nextAudioTrack)
+                }
                 }
             }
         }
@@ -387,14 +392,14 @@ private enum class TransportGlyph { Previous, Play, Pause, Next }
 
 @Composable
 private fun PlayerButton(icon: TransportGlyph, label: String, enabled: Boolean, accent: Color,
-    primary: Boolean = false, onPrimary: Color = Color.White,
+    primary: Boolean = false, scale: Float = 1f, onPrimary: Color = Color.White,
     modifier: Modifier = Modifier, onClick: () -> Unit) {
     IconButton(onClick = onClick, enabled = enabled,
-        modifier = modifier.size(if (primary) 64.dp else 48.dp)
+        modifier = modifier.size((if (primary) 64.dp else 48.dp) * scale)
             .focusRing(color = if (primary) onPrimary else accent)
             .background(if (primary) accent.copy(alpha = if (enabled) 1f else .3f) else Color.Transparent, CircleShape)
             .semantics { contentDescription = label }) {
-        Canvas(Modifier.size(if (primary) 26.dp else 24.dp)) {
+        Canvas(Modifier.size((if (primary) 26.dp else 24.dp) * scale)) {
             val u = size.minDimension / 24f
             val color = (if (primary) onPrimary else accent).copy(alpha = if (enabled) 1f else .35f)
             fun point(x: Float, y: Float) = Offset(x * u, y * u)
