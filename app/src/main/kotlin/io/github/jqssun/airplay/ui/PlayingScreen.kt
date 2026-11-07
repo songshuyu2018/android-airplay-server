@@ -159,23 +159,31 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         }
     }
     BoxWithConstraints(Modifier.fillMaxSize().background(colors.base)) {
-        val compact = maxHeight < 440.dp
-        val edge = if (compact) 20.dp else 40.dp
+        val square = maxWidth < maxHeight * 1.3f
+        val compact = maxHeight < 440.dp || square
+        val edge = if (square) 16.dp else if (compact) 20.dp else 40.dp
         val topGap = if (compact) 56.dp else 88.dp
+        val columnGap = if (square) 16.dp else if (compact) 24.dp else 52.dp
+        val contentWidth = (maxWidth - edge * 2 - columnGap).coerceAtLeast(0.dp)
+        // Reserve the actual 48 + 64 + 48 dp transport width before sizing the disc.
+        val detailsWidth = maxOf(contentWidth / 2, 160.dp).coerceAtMost(contentWidth)
+        val controlGap = ((detailsWidth - 160.dp) / 2).coerceIn(0.dp, if (compact) 16.dp else 26.dp)
+        val titleSize = minOf(if (square) 28f else if (compact) 27f else 40f,
+            detailsWidth.value * .12f).coerceAtLeast(18f).sp
         PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue })
         Row(Modifier.fillMaxSize().padding(horizontal = edge).padding(top = topGap, bottom = if (compact) 18.dp else 40.dp), verticalAlignment = Alignment.CenterVertically) {
             BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
                 val discSize = minOf(maxWidth, maxHeight)
                 RecordSpectrum(displayCover, colors, { angle.floatValue }, { spectrum.value }, Modifier.size(discSize))
             }
-            Spacer(Modifier.width(if (compact) 24.dp else 52.dp))
-            Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.Center) {
+            Spacer(Modifier.width(columnGap))
+            Column(Modifier.width(detailsWidth).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.Center) {
                 if (!compact) {
                     Text("NOW PLAYING", color = colors.body, fontSize = 11.sp, letterSpacing = 3.sp)
                     Spacer(Modifier.height(18.dp))
                 }
-                Text(track.title.ifBlank { stringResource(R.string.player_waiting) }, color = colors.ink, fontSize = if (compact) 27.sp else 40.sp,
-                    fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = if (compact) 33.sp else 48.sp)
+                Text(track.title.ifBlank { stringResource(R.string.player_waiting) }, color = colors.ink, fontSize = titleSize,
+                    fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = titleSize * 1.2f)
                 Spacer(Modifier.height(if (compact) 8.dp else 14.dp))
                 Text(track.artist.ifBlank { if (connected) stringResource(R.string.player_unknown_artist) else "AirPlay" }, color = colors.body, fontSize = if (compact) 15.sp else 21.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(5.dp))
@@ -183,7 +191,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                 Spacer(Modifier.height(if (compact) 20.dp else 34.dp))
                 PlayerProgress(viewModel, colors.body)
                 Spacer(Modifier.height(if (compact) 10.dp else 20.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compact) 16.dp else 26.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(controlGap)) {
                     PlayerButton(TransportGlyph.Previous, stringResource(R.string.player_previous), controlsReady && connected, colors.ink, onClick = viewModel::previousAudioTrack)
                     PlayerButton(if (playing) TransportGlyph.Pause else TransportGlyph.Play,
                         stringResource(if (playing) R.string.player_pause else R.string.player_play), controlsReady && connected, colors.ink,

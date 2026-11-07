@@ -32,3 +32,11 @@ continuous soft gradients at every edge/corner (especially bottom-left), no whit
 panel boundaries, slow organic drift, readable text/header, pause/resume continuity,
 no jump after returning from desktop, and smooth record rotation. Mathematical
 palette tests do not replace these Android rendering checks.
+
+## Square displays
+
+Ratios below 1.3 use reduced margins/spacing and width-based title sizing (18–28sp).
+The details column reserves at least 160dp for 48/64/48dp transport buttons; gaps
+use only the space remaining in that column. The disc takes the remaining width.
+Check 320/360/480/600dp square displays with two-line titles and all three controls
+visible. Wider screens retain the two equal columns and their existing size caps.
