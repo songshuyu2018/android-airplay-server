@@ -39,6 +39,12 @@ jobs:
           javac -d /tmp/palette-tests app/src/main/java/io/github/jqssun/airplay/audio/PlayerPalette.java tests/player/PlayerPaletteTest.java
           java -cp /tmp/palette-tests PlayerPaletteTest
 
+      - name: Test automatic audio presentation
+        run: |
+          mkdir -p /tmp/presentation-tests
+          javac -d /tmp/presentation-tests app/src/main/java/io/github/jqssun/airplay/audio/AudioPresentationPolicy.java tests/presentation/AudioPresentationPolicyTest.java
+          java -cp /tmp/presentation-tests AudioPresentationPolicyTest
+
       - name: Build release APK
         run: |
           export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
