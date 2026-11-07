@@ -3,15 +3,16 @@ package io.github.jqssun.airplay.audio;
 /** Album-derived light surfaces and independently contrast-checked foreground roles. */
 public final class PlayerPalette {
     public final int base, glow, secondaryGlow, vibrantGlow, vibrantSecondaryGlow, ink, body, accent;
-    // A 70% white reading veil bounds the darkest background behind text/icons.
-    private static final int READING_FLOOR = 0xffb2b2b2;
-    private PlayerPalette(int seed, int secondary, int vibrant, int vibrantSecondary) {
+    // Every painted gradient channel is >= 163. This bounds every overlap and
+    // interpolated shade, without rectangular white masks behind the foreground.
+    private static final int LIGHT_FLOOR = 0xffa3a3a3;
+    private PlayerPalette(int seed, int vibrant, int vibrantSecondary) {
         base = mix(seed, 0xffffffff, .88);
-        glow = mix(seed, 0xffffffff, .68);
-        secondaryGlow = mix(secondary, 0xffffffff, .72);
+        glow = mix(vibrant, 0xffffffff, .64);
+        secondaryGlow = mix(vibrantSecondary, 0xffffffff, .64);
         vibrantGlow = vibrant;
         vibrantSecondaryGlow = vibrantSecondary;
-        int[] backgrounds = {base, glow, secondaryGlow, READING_FLOOR};
+        int[] backgrounds = {base, glow, secondaryGlow, LIGHT_FLOOR};
         ink = ensureContrast(mix(seed, 0xff000000, .58), backgrounds, 8);
         body = ensureContrast(mix(seed, 0xff000000, .30), backgrounds, 5);
         accent = ensureContrast(seed, backgrounds, 4);
@@ -50,19 +51,12 @@ public final class PlayerPalette {
             double candidate = sums[i][3] / Math.pow(Math.max(1, sums[i][4]), .2);
             if (candidate > score) {score = candidate; first = i;}
         }
-        if (first < 0) return new PlayerPalette(0xff8b5f83, 0xff776d99, 0xff8b5f83, 0xff776d99);
-        int second = first; score = 0;
-        for (int i = 0; i < 96; i++) {
-            int distance = Math.abs(i / 4 - first / 4);
-            if (first >= 96 || Math.min(distance, 24 - distance) < 3) continue;
-            double candidate = sums[i][3] / Math.pow(Math.max(1, sums[i][4]), .2);
-            if (candidate > score) {score = candidate; second = i;}
-        }
+        if (first < 0) return new PlayerPalette(0xff8b5f83, 0xff8b5f83, 0xff776d99);
         int vividFirst = selectVivid(vivid, opaquePixels, -1);
         int vividSecond = vividFirst < 0 ? -1 : selectVivid(vivid, opaquePixels, vividFirst);
         int vibrant = vividFirst < 0 ? average(sums[first]) : brighten(average(vivid[vividFirst]));
         int vibrantSecondary = vividSecond < 0 ? vibrant : brighten(average(vivid[vividSecond]));
-        return new PlayerPalette(average(sums[first]), average(sums[second]), vibrant, vibrantSecondary);
+        return new PlayerPalette(average(sums[first]), vibrant, vibrantSecondary);
     }
     private static int selectVivid(double[][] buckets, int total, int differentFrom) {
         int best = -1;

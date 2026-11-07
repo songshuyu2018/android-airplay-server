@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.geometry.Size
 import io.github.jqssun.airplay.audio.PlayerPalette
 import androidx.activity.compose.BackHandler
@@ -25,7 +26,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -54,10 +54,8 @@ import kotlin.math.*
 import kotlin.random.Random
 
 private data class PlayerColors(val base: Color, val glow: Color, val secondaryGlow: Color,
-    val vibrantGlow: Color, val vibrantSecondaryGlow: Color,
     val ink: Color, val body: Color, val accent: Color)
-private fun PlayerPalette.colors() = PlayerColors(Color(base), Color(glow), Color(secondaryGlow),
-    Color(vibrantGlow), Color(vibrantSecondaryGlow), Color(ink), Color(body), Color(accent))
+private fun PlayerPalette.colors() = PlayerColors(Color(base), Color(glow), Color(secondaryGlow), Color(ink), Color(body), Color(accent))
 private val DefaultPlayerColors = PlayerPalette.fromPixels(intArrayOf()).colors()
 private fun coverColors(bitmap: Bitmap?): PlayerColors {
     if (bitmap == null) return DefaultPlayerColors
@@ -73,12 +71,10 @@ private fun animatedColors(target: PlayerColors): PlayerColors {
     val base by animateColorAsState(target.base, tween(600), label = "player base")
     val glow by animateColorAsState(target.glow, tween(600), label = "player glow")
     val secondary by animateColorAsState(target.secondaryGlow, tween(600), label = "player secondary")
-    val vibrant by animateColorAsState(target.vibrantGlow, tween(600), label = "player vibrant glow")
-    val vibrantSecondary by animateColorAsState(target.vibrantSecondaryGlow, tween(600), label = "player vibrant secondary")
     val ink by animateColorAsState(target.ink, tween(600), label = "player ink")
     val body by animateColorAsState(target.body, tween(600), label = "player body")
     val accent by animateColorAsState(target.accent, tween(600), label = "player accent")
-    return PlayerColors(base, glow, secondary, vibrant, vibrantSecondary, ink, body, accent)
+    return PlayerColors(base, glow, secondary, ink, body, accent)
 }
 
 @Composable
@@ -209,19 +205,19 @@ private data class LightKey(
     val x: Float, val y: Float, val scaleX: Float, val scaleY: Float, val opacity: Float
 )
 
-/** Random keyframes are allocated only once every 18–32 seconds, never per frame. */
+/** Ample travel, very slow transitions; no keyframe allocations on animation frames. */
 private class LightDrift {
     private fun key() = LightKey(
-        Random.nextFloat() * .15f - .075f,
         Random.nextFloat() * .20f - .10f,
-        1.3f + Random.nextFloat() * .25f,
-        1.3f + Random.nextFloat() * .25f,
-        .68f + Random.nextFloat() * .32f
+        Random.nextFloat() * .28f - .14f,
+        .88f + Random.nextFloat() * .24f,
+        .88f + Random.nextFloat() * .24f,
+        .9f + Random.nextFloat() * .1f
     )
     private var from = key()
     private var to = key()
     private var elapsed = 0f
-    private var duration = 18f + Random.nextFloat() * 14f
+    private var duration = 40f + Random.nextFloat() * 30f
     var x = from.x
         private set
     var y = from.y
@@ -239,7 +235,7 @@ private class LightDrift {
             elapsed -= duration
             from = to
             to = key()
-            duration = 18f + Random.nextFloat() * 14f
+            duration = 40f + Random.nextFloat() * 30f
         }
         val t = (elapsed / duration).coerceIn(0f, 1f)
         // Zero velocity and acceleration at each boundary: no abrupt direction changes.
@@ -271,62 +267,46 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
             }
         }
     }
-    Box(Modifier.fillMaxSize().clipToBounds()) {
-        Box(Modifier.fillMaxSize().graphicsLayer().drawWithCache {
-            val base = Brush.linearGradient(listOf(colors.base, colors.secondaryGlow, colors.base),
-                end = Offset(size.width, size.height))
-            onDrawBehind { drawRect(base) }
-        })
-        for (index in lights.indices) {
-            val light = lights[index]
-            Box(Modifier.fillMaxSize().graphicsLayer {
-                // Read animation state only here: update layer properties without
-                // recomposing the player or rebuilding its cached gradient shaders.
-                frame.longValue
-                translationX = light.x * size.width
-                translationY = light.y * size.height
-                scaleX = light.scaleX
-                scaleY = light.scaleY
-                alpha = light.opacity * (.78f + energy() * .18f)
-                compositingStrategy = CompositingStrategy.ModulateAlpha
-            }.drawWithCache {
-                val color = when (index) {
-                    0 -> colors.vibrantGlow.copy(alpha = .95f)
-                    1 -> colors.vibrantSecondaryGlow.copy(alpha = .85f)
-                    else -> lerp(colors.vibrantGlow, colors.vibrantSecondaryGlow, .35f).copy(alpha = .65f)
-                }
-                val center = when (index) {
-                    0 -> Offset(size.width * .18f, size.height * .34f)
-                    1 -> Offset(size.width * .92f, size.height * .12f)
-                    else -> Offset(size.width * .64f, size.height * 1.1f)
-                }
-                val radius = size.width * when (index) { 0 -> .75f; 1 -> .58f; else -> .64f }
-                val glow = Brush.radialGradient(listOf(color, color.copy(alpha = 0f)), center, radius)
-                // Oversized layers keep every moving rectangle edge outside the viewport.
-                // The radial falloff supplies softness without live blur or bitmap buffers.
-                onDrawBehind { drawRect(glow) }
-            })
+    // One uninterrupted canvas, as in the original background. Move the gradients
+    // themselves, never a rectangular color layer or a separate reading panel.
+    Box(Modifier.fillMaxSize().graphicsLayer().drawWithCache {
+        val width = size.width
+        val height = size.height
+        val base = Brush.linearGradient(listOf(colors.base, colors.secondaryGlow, colors.base),
+            end = Offset(width, height))
+        val centers = arrayOf(
+            Offset(width * .18f, height * .34f),
+            Offset(width * .92f, height * .12f),
+            Offset(width * .64f, height * 1.1f)
+        )
+        val radii = floatArrayOf(width * .75f, width * .58f, width * .64f)
+        val shades = arrayOf(colors.glow.copy(alpha = .95f),
+            colors.secondaryGlow.copy(alpha = .85f), colors.glow.copy(alpha = .48f))
+        val gradients = Array(3) { index ->
+            Brush.radialGradient(listOf(shades[index], shades[index].copy(alpha = 0f)),
+                center = Offset.Zero, radius = radii[index])
         }
-        // Colorful light stays vivid around the record. Protect the right-hand
-        // reading column and header independently rather than whitening every glow.
-        // Both veils are cached; the 70% white floor is checked by PlayerPalette.
-        Box(Modifier.fillMaxSize().graphicsLayer().drawWithCache {
-            val rightStart = size.width * .4f
-            val rightWash = Brush.horizontalGradient(listOf(Color.White.copy(alpha = 0f), Color.White.copy(alpha = .70f)),
-                startX = rightStart, endX = size.width * .5f)
-            val headerHeight = minOf(size.height, 128.dp.toPx())
-            val headerWash = Brush.verticalGradient(
-                0f to Color.White.copy(alpha = .72f),
-                .75f to Color.White.copy(alpha = .72f),
-                1f to Color.White.copy(alpha = 0f), endY = headerHeight)
-            val rightSize = Size(size.width - rightStart, size.height)
-            val headerSize = Size(size.width, headerHeight)
-            onDrawBehind {
-                drawRect(rightWash, topLeft = Offset(rightStart, 0f), size = rightSize)
-                drawRect(headerWash, size = headerSize)
+        onDrawBehind {
+            // Only this draw node observes the clock; layout and the record stay
+            // independent. Shader parameters are cached above, not rebuilt per frame.
+            frame.longValue
+            drawRect(base)
+            val breath = .94f + energy() * .06f
+            for (index in lights.indices) {
+                val light = lights[index]
+                val center = centers[index]
+                withTransform({
+                    translate(center.x + light.x * width, center.y + light.y * height)
+                    scale(light.scaleX, light.scaleY, pivot = Offset.Zero)
+                }) {
+                    // The circular primitive fades completely before its boundary.
+                    // Overlap and gentle elliptical deformation make an organic wash.
+                    drawCircle(gradients[index], radii[index], center = Offset.Zero,
+                        alpha = light.opacity * breath)
+                }
             }
-        })
-    }
+        }
+    })
 }
 
 @Composable

@@ -1,37 +1,34 @@
 # Playing visual verification
 
-The player keeps album-derived light surfaces and dark, readable text. Background
-light accents use a separate extraction pass: sufficiently large, saturated cover
-regions outrank broad muted colors. White borders, near-black noise, transparent
-pixels and isolated colored pixels do not dilute that selection. Dark colorful
-accents are lifted in brightness without adding white; a second hue is used only
-when it actually exists in the cover. Monochrome covers remain neutral.
+The player uses the original single, continuous background: a diagonal pastel
+base and three broad, overlapping radial gradients at the original centers/radii.
+There are no separate reading panels, horizontal/vertical white masks, moving
+full-screen rectangles or transformed rectangular color layers. Each glow is
+painted as a circle with zero alpha at its outer boundary, transformed within
+one full-screen drawing surface. Overlap and gentle elliptical deformation make
+an irregular wash without exposing any internal rectangular edge.
 
-A cached white reading gradient protects the text column and header independently
-of the vivid lights. PlayerPalette checks foreground contrast against its 70%
-white floor as well as the original pastel surfaces. The light colors themselves
-are not whitened into background-surface colors. Three cached
-radial gradients drift independently between random positions, sizes and opacity
-targets, taking 18–32 seconds per transition. A quintic interpolation eases every
-boundary. The existing low-frequency PCM spectrum drives a slow brightness envelope;
-there is no extra JNI sampling or live blur pass.
+The separate vivid-cover extraction remains: sufficiently large saturated regions
+outrank muted regions; white borders, transparent pixels and isolated colored noise
+do not dilute them. The selected hues become soft light colors with a 64% white
+mix. Every painted RGB channel is at least 163, so all gradient interpolation and
+layer overlaps share that lower bound. Foreground contrast is checked against that
+conservative bound, replacing the former rectangular white veils. Gray covers stay
+neutral; the palette test still exercises 2000 mixed palettes and vivid-cover cases.
 
-The background clock runs only while playback is active and the Activity lifecycle
-is STARTED. Pause/background cancels it without resetting light positions. Resume
-starts a fresh timestamp baseline so time away cannot fast-forward the effect.
-A delayed foreground frame is bounded as well. Colors can still crossfade normally
-when a new album cover arrives.
+The gradients travel up to 10% of width and 14% of height, with modest elliptical
+shape changes, but each random transition takes 40–70 seconds. Quintic easing
+keeps direction changes smooth. The existing PCM spectrum adds only a subtle
+brightness envelope. No extra audio sampling or live blur pass is added.
 
-Frame updates only invalidate graphics-layer transform/alpha properties. Radial
-shaders remain cached, no keyframes are allocated per frame, and ModulateAlpha
-avoids intermediate offscreen buffers for the translucent single-rectangle layers.
-The light layers are enlarged so all translated rectangle edges remain outside the
-clipped viewport at every allowed scale and position. Record and progress rendering
-remain independent.
+Pause/background cancels the clock without resetting the light positions. Resume
+starts a fresh timestamp baseline, and delayed frames are bounded. Only the
+background draw node reads the animation clock; gradients, circles and radii are
+cached, with Canvas transforms moving their centers. Layout, record rotation and
+progress rendering remain independent. Shader brushes are not recreated per frame.
 
-After installing the CI APK, verify several minutes of playback at 4:3 and 16:9,
-vivid accents on mostly neutral covers, readable text/header, light drift and gentle
-musical breathing, pause/resume continuity, no jump after
-returning from desktop, cover/theme changes, readable text, and smooth record
-rotation. These rendering/performance checks require a device and are not implied
-by the palette contrast unit tests.
+After installing the CI APK, verify 4:3 and 16:9 screens over several minutes:
+continuous soft gradients at every edge/corner (especially bottom-left), no white
+panel boundaries, slow organic drift, readable text/header, pause/resume continuity,
+no jump after returning from desktop, and smooth record rotation. Mathematical
+palette tests do not replace these Android rendering checks.
