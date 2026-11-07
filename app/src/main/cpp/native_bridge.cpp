@@ -613,3 +613,14 @@ Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeShairportUsed(
 }
 
 
+
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeAudioSpectrum(
+        JNIEnv *env, jobject, jlong handle, jboolean enabled) {
+    server_ctx_t *ctx = (server_ctx_t *)(intptr_t)handle;
+    float bands[48] = {};
+    if (ctx) audio_engine_spectrum(ctx->cb_ctx.audio_engine, bands, enabled);
+    jfloatArray result = env->NewFloatArray(48);
+    if (result) env->SetFloatArrayRegion(result, 0, 48, bands);
+    return result;
+}
