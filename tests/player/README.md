@@ -17,7 +17,7 @@ conservative bound, replacing the former rectangular white veils. Gray covers st
 neutral; the palette test still exercises 2000 mixed palettes and vivid-cover cases.
 
 The gradients travel up to 10% of width and 14% of height, with modest elliptical
-shape changes, but each random transition takes 40–70 seconds. Quintic easing
+shape changes, but each random transition takes 10–17.5 seconds. Quintic easing
 keeps direction changes smooth. The existing PCM spectrum adds only a subtle
 brightness envelope. No extra audio sampling or live blur pass is added.
 

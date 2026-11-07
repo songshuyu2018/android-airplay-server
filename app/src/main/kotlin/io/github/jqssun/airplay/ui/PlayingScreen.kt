@@ -217,7 +217,7 @@ private class LightDrift {
     private var from = key()
     private var to = key()
     private var elapsed = 0f
-    private var duration = 40f + Random.nextFloat() * 30f
+    private var duration = 10f + Random.nextFloat() * 7.5f
     var x = from.x
         private set
     var y = from.y
@@ -235,7 +235,7 @@ private class LightDrift {
             elapsed -= duration
             from = to
             to = key()
-            duration = 40f + Random.nextFloat() * 30f
+            duration = 10f + Random.nextFloat() * 7.5f
         }
         val t = (elapsed / duration).coerceIn(0f, 1f)
         // Zero velocity and acceleration at each boundary: no abrupt direction changes.
