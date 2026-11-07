@@ -10,9 +10,12 @@ metadata, mDNS probes and TCP connections do not open the player.
 - Pause/teardown: close after 30 seconds. Duplicate stop events cannot extend it.
 - Missing audio without teardown: detect inactivity after five seconds and count
   the 30-second deadline from the last audio activity. Zero-valued PCM is playback.
-- Initial idle does not auto-close. Automatic Playing closes to the previous app/home
-  using moveTaskToBack; manual Playing closes to Overview. Other tabs and video
-  playback are left alone. Obsolete navigation requests are filtered on recreation.
+- Initial idle does not auto-close. Both automatic and manual Playing return to
+  the launcher after the stop deadline. This explicitly starts CATEGORY_HOME and
+  moves the task back with automatic PiP suppressed, retaining Playing for the
+  next app visit. The manual back button still opens Overview so settings and
+  other tabs remain accessible. Other tabs and video playback are left alone.
+  Obsolete navigation requests are filtered on recreation.
 - Presentation uses MainActivity, its original orientation/back handling and its
   original player composition. No service overlay window is created.
 
@@ -54,7 +57,8 @@ is needed for that device's dedicated playback center.
 ## Verification
 
 Device verification after the CI build should cover authorized background Activity
-launch, 30-second return to background, manual Playing return to Overview, first
+launch, 30-second return to desktop for both entry modes, manual Back opening
+Overview for manual navigation, reopening Playing after idle exit, first
 manual-launch permission prompt, pause/resume/seek, sender takeover, and system
 notification controls. Huawei playback center acceptance is a separate check.
 

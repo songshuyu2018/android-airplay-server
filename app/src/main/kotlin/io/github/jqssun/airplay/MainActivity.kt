@@ -159,7 +159,7 @@ class MainActivity : ComponentActivity() {
                     onLocalNetwork = ::_requestLocalNetwork,
                     audioPageRequest = audioPageRequest.value,
                     manualEntryId = manualPageEntry.value,
-                    onAudioIdleBackground = ::backgroundAfterAudio
+                    onAudioIdleHome = ::returnToHome
                 )
             }
         }
@@ -203,11 +203,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun backgroundAfterAudio() {
+    private fun returnToHome() {
         service?.uiVisible = false
         suppressAutoPip = true
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) setPictureInPictureParams(_pipParams())
+        // Select the launcher explicitly: moving this task back alone can reveal
+        // whichever app was underneath the automatically opened player.
+        startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         moveTaskToBack(true)
     }
 

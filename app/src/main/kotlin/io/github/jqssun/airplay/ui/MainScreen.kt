@@ -100,7 +100,7 @@ fun MainScreen(
     onLocalNetwork: () -> Unit = {},
     audioPageRequest: AudioPageRequest? = null,
     manualEntryId: Long = 0L,
-    onAudioIdleBackground: () -> Unit = {}
+    onAudioIdleHome: () -> Unit = {}
 ) {
     var tab by rememberSaveable { mutableStateOf(Tab.PLAYING) }
     var automaticPage by rememberSaveable { mutableStateOf(false) }
@@ -140,10 +140,8 @@ fun MainScreen(
             fullscreen = false
             tab = Tab.PLAYING
         } else if (tab == Tab.PLAYING && !fullscreen && !videoPlaybackActive && !videoSessionPending && !mirroringActive) {
-            val background = automaticPage
             automaticPage = false
-            tab = Tab.OVERVIEW
-            if (background) onAudioIdleBackground()
+            onAudioIdleHome()
         }
     }
 
