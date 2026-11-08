@@ -163,7 +163,12 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                         val bass = sqrt(bassPower / bassCount).coerceIn(0f, 1f)
                         val rise = bass - previousBass
                         if (rise > .008f && bass > bassBaseline * 1.15f + .005f) {
-                            onset = (rise / maxOf(.025f, bassBaseline * .65f)).coerceIn(0f, 1f)
+                            val attack = (rise / maxOf(.08f, bassBaseline * .5f)).coerceIn(0f, 1f)
+                            val weight = ((bass - bassBaseline * .6f) /
+                                maxOf(.30f, bassBaseline * 1.5f)).coerceIn(0f, 1f)
+                            // Preserve hit strength instead of saturating most onsets
+                            // to the same pulse. Weak hits remain small and pale.
+                            onset = attack * (.25f + weight * .75f)
                         }
                         bassBaseline += (bass - bassBaseline) * .08f
                         previousBass = bass
@@ -328,7 +333,7 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
                     val seconds = ((now - previous) / 1e9f).coerceIn(0f, .1f)
                     for (light in lights) light.advance(seconds)
                     val targetBeat = beat()
-                    val response = if (targetBeat > beatPulse.floatValue) .025f else .14f
+                    val response = if (targetBeat > beatPulse.floatValue) .025f else .22f
                     val follow = 1f - exp(-seconds / response)
                     beatPulse.floatValue += (targetBeat - beatPulse.floatValue) * follow
                     frame.longValue++
@@ -356,25 +361,57 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
             Brush.radialGradient(listOf(shades[index], shades[index].copy(alpha = 0f)),
                 center = Offset.Zero, radius = radii[index])
         }
+        val leftRestColor = Color(
+            red = colors.base.red * .55f + colors.glow.red * .45f,
+            green = colors.base.green * .55f + colors.glow.green * .45f,
+            blue = colors.base.blue * .55f + colors.glow.blue * .45f)
+        val leftRestGradient = Brush.radialGradient(
+            listOf(leftRestColor.copy(alpha = .95f), leftRestColor.copy(alpha = 0f)),
+            center = Offset.Zero, radius = radii[0])
+        // Paint the beat-driven left wash last so a strong hit can reach all four
+        // corners without being covered by the right/background light layers.
+        val drawOrder = intArrayOf(1, 2, 0)
         onDrawBehind {
             // Only this draw node observes the clock; layout and the record stay
-            // independent. Shader parameters are cached above, not rebuilt per frame.
+            // independent. Both left color variants are cached, not rebuilt per beat.
             frame.longValue
             drawRect(base)
-            val pulse = beatPulse.floatValue.coerceIn(0f, 1f)
-            val breath = .82f + energy() * .06f + pulse * .12f
-            for (index in lights.indices) {
+            val impact = (beatPulse.floatValue / .8f).coerceIn(0f, 1f)
+            val expansion = impact * impact
+            val breath = .94f + energy() * .06f
+            for (index in drawOrder) {
                 val light = lights[index]
                 val center = centers[index]
-                val zoom = light.zoom * (1f + pulse * .15f)
+                val x = center.x + light.x * width
+                val y = center.y + light.y * height
+                var sx = light.scaleX * light.zoom
+                var sy = light.scaleY * light.zoom
+                if (index == 0) {
+                    val farX = maxOf(abs(x), abs(width - x))
+                    val farY = maxOf(abs(y), abs(height - y))
+                    // The furthest corner remains inside the soft fade at max impact.
+                    // Compute this from the moving center for any display aspect ratio.
+                    val fullRadius = maxOf(sqrt(farX * farX + farY * farY) * 1.35f,
+                        radii[0] * maxOf(sx, sy) * 1.8f)
+                    val fullScale = fullRadius / radii[0]
+                    sx += (fullScale - sx) * expansion
+                    sy += (fullScale - sy) * expansion
+                }
                 withTransform({
-                    translate(center.x + light.x * width, center.y + light.y * height)
-                    scale(light.scaleX * zoom, light.scaleY * zoom, pivot = Offset.Zero)
+                    translate(x, y)
+                    scale(sx, sy, pivot = Offset.Zero)
                 }) {
-                    // The circular primitive fades completely before its boundary.
-                    // Overlap and gentle elliptical deformation make an organic wash.
-                    drawCircle(gradients[index], radii[index], center = Offset.Zero,
-                        alpha = light.opacity * breath)
+                    if (index == 0) {
+                        // Quiet: a pale wash. Heavy hit: stronger album color over
+                        // the same expanding shape; all RGB values retain the safe floor.
+                        drawCircle(leftRestGradient, radii[0], center = Offset.Zero,
+                            alpha = light.opacity * breath)
+                        if (impact > .001f) drawCircle(gradients[0], radii[0], center = Offset.Zero,
+                            alpha = light.opacity * impact)
+                    } else {
+                        drawCircle(gradients[index], radii[index], center = Offset.Zero,
+                            alpha = light.opacity * breath)
+                    }
                 }
             }
         }

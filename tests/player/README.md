@@ -56,12 +56,25 @@ Each light additionally breathes in scale by ±12% over a smooth three-second
 sine cycle, independently of its random movement segment. Phases differ between
 lights; pause/background freezes both drift and zoom without resetting either.
 
-Bass-onset feedback reuses the first eight existing FFT bands at 20Hz. Positive
-bass changes above a slowly tracked baseline trigger a short pulse; sustained
-loudness and silence do not continuously trigger it. The envelope decays between
-onsets and is smoothed at frame rate with fast attack/soft release. It adds up
-to 15% expansion and 12 percentage points of colored glow strength on top of
-existing random drift and independent three-second breathing. No extra JNI/audio
-thread work is introduced. This is onset feedback, not a BPM/beat-grid estimator.
-Device checks: percussive vs sustained music, quiet passages, pause/resume, readable
-text, and smooth record rotation; sensitivity needs listening-device verification.
+## Left glow beat response
+
+Bass-onset feedback reuses the first eight FFT bands at 20Hz. Attack strength and
+bass weight above a slow baseline determine the pulse, so weak/strong hits do not
+all clip to one intensity. Sustained loudness and silence do not continuously fire.
+The frame-rate envelope has a 25ms attack response and a softer 220ms release in
+addition to the sampled pulse decay.
+
+Only the left glow reacts to beats. Weak hits produce a small pale wash; strong
+hits expand it and blend in the extracted album color. Its maximum radius is at
+least 1.8 times its resting radius and 1.35 times the distance from the moving
+center to the furthest screen corner,
+covering the whole screen softly at full impact for square, 4:3 and 16:9 layouts.
+The left light is painted last. Both color variants use cached radial brushes;
+there are no rectangle masks, bitmap resizing or per-frame shader allocations.
+Their RGB components respect the existing palette floor, preserving text contrast.
+The other lights retain their random movement and independent 3s breathing.
+
+Device checks: weak vs heavy percussion, full-screen expansion without hard edges,
+soft recovery, quiet/sustained passages, pause/resume, and smooth record rotation.
+This is onset feedback, not a BPM/beat-grid estimator; sensitivity needs listening
+on the actual device.
