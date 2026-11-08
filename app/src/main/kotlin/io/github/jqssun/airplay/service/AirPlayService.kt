@@ -1439,7 +1439,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     }
 
     fun audioSpectrum(enabled: Boolean): FloatArray =
-        if (nativeHandle != 0L) NativeBridge.nativeAudioSpectrum(nativeHandle, enabled) else FloatArray(48)
+        if (nativeHandle != 0L) NativeBridge.nativeAudioSpectrum(nativeHandle, enabled) else FloatArray(49)
 
     private fun pauseAudioLocally() {
         audioRenderer.silenceForFiveSeconds()

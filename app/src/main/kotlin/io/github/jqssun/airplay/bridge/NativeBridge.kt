@@ -50,6 +50,7 @@ object NativeBridge {
                                             forceSwAac: Boolean, realtimePriority: Boolean,
                                             lowLatency: Boolean, benchmarkLog: Boolean): Boolean
     external fun nativeServerAudioStart(handle: Long): Boolean
+    /** 48 display bands, then a timestamp-decayed PCM onset envelope (0..1). */
     external fun nativeAudioSpectrum(handle: Long, enabled: Boolean): FloatArray
     external fun nativeServerAudioStop(handle: Long)
     external fun nativeServerAudioSetClientGain(handle: Long, gain: Float)

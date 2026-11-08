@@ -203,7 +203,7 @@ class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app
     fun toggleAudioPlayback() { service?.togglePlayPause() }
     fun previousAudioTrack() { service?.dacpController?.prevItem() }
     fun nextAudioTrack() { service?.dacpController?.nextItem() }
-    fun audioSpectrum(enabled: Boolean) = service?.audioSpectrum(enabled) ?: FloatArray(48)
+    fun audioSpectrum(enabled: Boolean) = service?.audioSpectrum(enabled) ?: FloatArray(49)
 
     // logs
     private val _logs = MutableStateFlow<List<String>>(emptyList())

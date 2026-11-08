@@ -220,7 +220,7 @@ public:
           mRing((size_t)sampleRate * (MAX_LEAD_MS + 2000 + TRIM_THROTTLE_MS) / 1000 * channels) {}
 
     void noteOutputBufferFrames(int frames) { mTracker.noteOutputBufferFrames(frames); }
-    void spectrum(float *bands, bool enabled) { mSpectrum.enabled(enabled); mSpectrum.read(bands, mSampleRate); }
+    void spectrum(float *bands, bool enabled) { mSpectrum.enabled(enabled); mSpectrum.read(bands, mSampleRate, bands + AudioSpectrum::BANDS); }
 
     // producer: push samples
     void write(const int16_t *pcm, size_t samples, int64_t ptsNs) {

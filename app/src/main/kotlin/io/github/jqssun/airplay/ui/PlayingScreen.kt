@@ -48,7 +48,6 @@ import io.github.jqssun.airplay.R
 import io.github.jqssun.airplay.viewmodel.MainViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.*
 import kotlin.random.Random
@@ -130,61 +129,43 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             }
         }
     }
-    // Spectrum polling has its own lower cadence. JNI stays on the main thread so
-    // receiver teardown cannot invalidate its handle during a background FFT call.
+    // Native PCM history is analysed at 256-sample hops, independent of display
+    // cadence. Keep JNI on main so receiver teardown cannot invalidate its handle.
     LaunchedEffect(viewModel, lifecycle) {
         lifecycle?.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            var previousBass = 0f
-            var bassBaseline = 0f
+            var previous = 0L
             try {
-                while (isActive) {
+                while (isActive) withFrameNanos { now ->
+                    val dt = if (previous == 0L) 1f / 60f else
+                        ((now - previous) / 1e9f).coerceIn(0f, .1f)
+                    previous = now
                     val values = viewModel.audioSpectrum(latestPlaying)
-                    // Reuse the existing PCM spectrum. Low-pass the lower bands so
-                    // the broad light breathes gently instead of flashing on beats.
                     if (latestPlaying && values.isNotEmpty()) {
-                        val count = minOf(16, values.size)
                         var sum = 0f
-                        for (i in 0 until count) {
+                        for (i in 0 until minOf(16, values.size)) {
                             val band = values[i]
                             if (band.isFinite()) sum += band * band
                         }
-                        val targetEnergy = sqrt(sum / count).coerceIn(0f, 1f)
-                        lightEnergy.floatValue += (targetEnergy - lightEnergy.floatValue) * .06f
+                        val target = sqrt(sum / minOf(16, values.size)).coerceIn(0f, 1f)
+                        lightEnergy.floatValue += (target - lightEnergy.floatValue) *
+                            (1f - exp(-dt / .8f))
                     }
-                    // Bass onsets, rather than loudness alone, produce a brief kick.
-                    var onset = 0f
-                    if (latestPlaying && values.isNotEmpty()) {
-                        val bassCount = minOf(8, values.size)
-                        var bassPower = 0f
-                        for (i in 0 until bassCount) {
-                            val band = values[i]
-                            if (band.isFinite()) bassPower += band * band
-                        }
-                        val bass = sqrt(bassPower / bassCount).coerceIn(0f, 1f)
-                        val rise = bass - previousBass
-                        if (rise > .008f && bass > bassBaseline * 1.15f + .005f) {
-                            val attack = (rise / maxOf(.08f, bassBaseline * .5f)).coerceIn(0f, 1f)
-                            val weight = ((bass - bassBaseline * .6f) /
-                                maxOf(.30f, bassBaseline * 1.5f)).coerceIn(0f, 1f)
-                            // Preserve hit strength instead of saturating most onsets
-                            // to the same pulse. Weak hits remain small and pale.
-                            onset = attack * (.25f + weight * .75f)
-                        }
-                        bassBaseline += (bass - bassBaseline) * .08f
-                        previousBass = bass
-                    } else {
-                        previousBass = 0f
-                        bassBaseline = 0f
-                    }
-                    lightBeat.floatValue = maxOf(onset, lightBeat.floatValue * .78f)
+                    // Native timestamped envelope already has instantaneous attack
+                    // and a soft release. Do not filter its attack a second time.
+                    lightBeat.floatValue = if (latestPlaying)
+                        values.getOrElse(48) { 0f }.let { if (it.isFinite()) it.coerceIn(0f, 1f) else 0f }
+                        else 0f
                     val old = spectrum.value
                     spectrum.value = FloatArray(48) { i ->
                         val target = if (latestPlaying) values.getOrElse(i) { 0f } else 0f
-                        old[i] + (target - old[i]) * if (target > old[i]) .75f else .26f
+                        val follow = 1f - exp(-dt / (if (target > old[i]) .025f else .16f))
+                        old[i] + (target - old[i]) * follow
                     }
-                    delay(50)
                 }
-            } finally { viewModel.audioSpectrum(false) }
+            } finally {
+                lightBeat.floatValue = 0f
+                viewModel.audioSpectrum(false)
+            }
         }
     }
     BoxWithConstraints(Modifier.fillMaxSize().background(colors.base)) {
@@ -322,7 +303,6 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
     energy: () -> Float, beat: () -> Float) {
     val lights = remember { Array(3) { LightDrift() } }
     val frame = remember { mutableLongStateOf(0L) }
-    val beatPulse = remember { mutableFloatStateOf(0f) }
     LaunchedEffect(playing, lifecycle) {
         if (playing) lifecycle?.repeatOnLifecycle(Lifecycle.State.STARTED) {
             var previous = 0L
@@ -332,10 +312,6 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
                     // so resuming or a busy device never jumps the light across the screen.
                     val seconds = ((now - previous) / 1e9f).coerceIn(0f, .1f)
                     for (light in lights) light.advance(seconds)
-                    val targetBeat = beat()
-                    val response = if (targetBeat > beatPulse.floatValue) .025f else .22f
-                    val follow = 1f - exp(-seconds / response)
-                    beatPulse.floatValue += (targetBeat - beatPulse.floatValue) * follow
                     frame.longValue++
                 }
                 previous = now
@@ -376,7 +352,7 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
             // independent. Both left color variants are cached, not rebuilt per beat.
             frame.longValue
             drawRect(base)
-            val impact = (beatPulse.floatValue / .8f).coerceIn(0f, 1f)
+            val impact = (beat() / .8f).coerceIn(0f, 1f)
             val expansion = impact * impact
             val breath = .94f + energy() * .06f
             for (index in drawOrder) {
