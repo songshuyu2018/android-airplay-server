@@ -22,6 +22,11 @@ jobs:
           java-version: "21"
           cache: "gradle"
 
+      - name: Prepare verified Gradle distribution
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/prepare_gradle.py
+
       - name: Test audio session ownership
         run: |
           mkdir -p /tmp/session-tests
