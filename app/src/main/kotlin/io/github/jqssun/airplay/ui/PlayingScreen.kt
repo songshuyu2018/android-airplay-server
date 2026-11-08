@@ -352,8 +352,12 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
             // independent. Both left color variants are cached, not rebuilt per beat.
             frame.longValue
             drawRect(base)
-            val impact = (beat() / .8f).coerceIn(0f, 1f)
-            val expansion = impact * impact
+            val impact = beat().coerceIn(0f, 1f)
+            // Ordinary onsets add a little color. Only the top of the attack range
+            // expands towards the screen corners; do not amplify weak values.
+            val heavy = ((impact - .55f) / .45f).coerceIn(0f, 1f)
+            val expansion = heavy * heavy
+            val colorImpact = impact * impact
             val breath = .94f + energy() * .06f
             for (index in drawOrder) {
                 val light = lights[index]
@@ -383,7 +387,7 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
                         drawCircle(leftRestGradient, radii[0], center = Offset.Zero,
                             alpha = light.opacity * breath)
                         if (impact > .001f) drawCircle(gradients[0], radii[0], center = Offset.Zero,
-                            alpha = light.opacity * impact)
+                            alpha = light.opacity * colorImpact)
                     } else {
                         drawCircle(gradients[index], radii[index], center = Offset.Zero,
                             alpha = light.opacity * breath)

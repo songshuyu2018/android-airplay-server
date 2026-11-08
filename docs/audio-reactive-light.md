@@ -27,10 +27,10 @@ arrival. The serialized JNI reader processes every 1024-sample Hann window at a
 256-sample hop (5.8ms at 44.1kHz), including windows between display frames.
 Positive changes in log magnitudes are measured independently in 40-250Hz,
 250-2200Hz and 2200-8000Hz. Rolling mean / variance adapt the trigger threshold;
-a silence floor and 95ms refractory interval limit noise and double triggers.
+a silence floor and 140ms refractory interval limit noise and double triggers.
 High-frequency-only attacks receive less weight. A running level reference retains
 weak / strong attack differences. The first response is not delayed for peak search;
-the strength may increase during the following 25ms of the same attack.
+the strength may increase during the following 35ms of the same attack.
 
 JNI returns 48 display bands plus a timestamp-decayed onset envelope. The screen
 samples it once per display frame. The glow uses the envelope directly: immediate
@@ -58,3 +58,20 @@ against input onset plus the analysis-window / polling allowance. This is not a
 measurement of physical speaker-to-display latency.
 
 Build with C++17 and run alongside `tests/audio/spectrum_test.cpp`; CI runs both.
+
+## Conservative strength mapping
+
+Onset presence and visual strength are distinct. Loudness relative to a rolling
+peak alone promoted sustained vocals/chords to almost-full strength. Strength now
+combines spectral novelty, fast band-energy rise, contrast above a 350ms band
+background, and linear level weight. Bass strength is additionally weighted by
+its share of the spectrum, so broadband noise does not masquerade as a kick.
+Mid-frequency-only and high-frequency-only contributions are capped at 0.32 and
+0.08. Sub-threshold weak attacks can be intentionally ignored. A strong bass
+attack can upgrade a preceding small accent during the refractory interval.
+
+The renderer no longer boosts 0.8 to full scale. Color response is squared; large
+expansion begins only above 0.55 and follows a quadratic knee up to 1. This keeps
+ordinary accents local while preserving full-screen reach for strong bass hits.
+Additional PCM fixtures check steady noise, slow bass swells, mid-frequency
+accents and a kick following an accent inside the refractory interval.

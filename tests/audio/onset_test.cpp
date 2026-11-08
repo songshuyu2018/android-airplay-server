@@ -21,14 +21,17 @@ std::vector<Hit> run(int rate, int pollHops, int kind, double period = .5) {
             const double t = (frame + i) / double(rate);
             double sample = 0;
             if (kind == 1) sample = .3 * std::sin(6.28318530718 * 83 * t);
-            if (kind == 2 || kind == 3) {
+            if (kind == 4) sample = .12 * noise(random); // steady broadband texture
+            if (kind == 5) sample = .4 * (.5 + .5 * std::sin(t * 1.8)) *
+                std::sin(6.28318530718 * 83 * t); // slow bass swell
+            if (kind == 2 || kind == 3 || kind == 6) {
                 for (int beat = 0; beat < 9; ++beat) {
                     const double age = t - (1. + beat * period);
                     const double duration = kind == 3 ? .016 : .12;
                     if (age >= 0 && age < duration) {
                         const double amplitude = beat % 2 ? .12 : .8;
                         sample += amplitude * std::exp(-age / .035) *
-                            (kind == 3 ? noise(random) : std::sin(6.28318530718 * 65 * age));
+                            (kind == 3 ? noise(random) : std::sin(6.28318530718 * (kind == 6 ? 800 : 65) * age));
                     }
                 }
             }
@@ -40,7 +43,7 @@ std::vector<Hit> run(int rate, int pollHops, int kind, double period = .5) {
         s.read(bands, rate, &pulse, now);
         const double t = (frame + 256) / double(rate);
         assert(std::isfinite(pulse) && pulse >= 0 && pulse <= 1);
-        if (pulse > previous + .09f && (hits.empty() || t - hits.back().time > .15))
+        if (pulse > previous + .012f && (hits.empty() || t - hits.back().time > .15))
             hits.push_back({t, pulse});
         else if (!hits.empty() && t - hits.back().time < .06)
             hits.back().strength = std::max(hits.back().strength, pulse);
@@ -56,19 +59,55 @@ int main() {
         for (int kind : {2, 3}) {
             auto hits = run(rate, poll, kind);
             std::cout << rate << " Hz, poll " << poll << ", kind " << kind << ": " << hits.size() << " hits" << std::endl;
-            assert(hits.size() == 9);
-            for (int i = 0; i < 9; ++i) {
-                const double delay = hits[i].time - (1. + i * .5);
+            // Deliberately allow weak strikes below the new visual gate to vanish.
+            assert(hits.size() >= 5 && hits.size() <= 9);
+            bool strong[5]{};
+            for (const auto& hit : hits) {
+                const int index = int(std::round((hit.time - 1.) / .5));
+                assert(index >= 0 && index < 9);
+                const double delay = hit.time - (1. + index * .5);
                 assert(delay >= 0 && delay < .025 + poll * 256. / rate);
-                if (i % 2) assert(hits[i-1].strength > hits[i].strength * 1.15f);
+                if (index % 2 == 0) strong[index / 2] = true;
+                else assert(hit.strength < .4f);
+                if (kind == 3) assert(hit.strength <= .321f); // broadband != bass drum
             }
+            for (bool detected : strong) assert(detected);
         }
     }
     for (double period : {.333333, .666667}) {
         auto hits = run(44100, 3, 2, period);
-        assert(hits.size() == 9); // 180 / 90 BPM, no fixed 120 BPM clock
-        for (int i = 0; i < 9; ++i)
-            assert(std::abs(hits[i].time - (1. + i * period)) < .045);
+        bool strong[5]{};
+        for (const auto& hit : hits) {
+            const int index = int(std::round((hit.time - 1.) / period));
+            assert(index >= 0 && index < 9);
+            assert(std::abs(hit.time - (1. + index * period)) < .045);
+            if (index % 2 == 0) strong[index / 2] = true;
+        }
+        for (bool detected : strong) assert(detected); // 180 / 90 BPM
+    }
+    for (int kind : {4, 5, 6}) {
+        auto hits = run(44100, 3, kind);
+        for (auto hit : hits) assert(hit.strength <= (kind == 5 ? .15f : .321f));
+    }
+    // A modest mid-frequency accent 60ms before a kick cannot suppress that kick.
+    {
+        AudioSpectrum detector; detector.enabled(true);
+        std::array<int16_t, 256> pcm{};
+        float bands[48], pulse = 0, kick = 0;
+        for (int frame = 0; frame < 44100 * 1.3; frame += 256) {
+            for (int i = 0; i < 256; ++i) {
+                const double t = (frame + i) / 44100.;
+                double sample = 0;
+                if (t >= .94 && t < .97) sample = .2 * std::sin(6.28318530718 * 800 * t);
+                if (t >= 1 && t < 1.12) sample += .8 * std::exp(-(t-1)/.035) * std::sin(6.28318530718 * 65 * (t-1));
+                pcm[i] = int16_t(sample * 32767);
+            }
+            const int64_t now = 1000000000LL + int64_t((frame + 256) * (1e9 / 44100));
+            detector.push(pcm.data(), pcm.size(), 1, now);
+            detector.read(bands, 44100, &pulse, now);
+            if (frame / 44100. >= 1.) kick = std::max(kick, pulse);
+        }
+        assert(kick > .55f);
     }
     // Disabling and restarting must not replay the previous PCM or pulse.
     AudioSpectrum s;
