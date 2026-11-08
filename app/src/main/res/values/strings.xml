@@ -223,4 +223,6 @@
     <string name="background_launch_continue">Continue</string>
     <string name="setting_audio_idle_return_home">停播后自动返回桌面</string>
     <string name="setting_audio_idle_return_home_desc">音乐停止播放 30 秒后返回桌面；关闭后保留播放页面。</string>
+    <string name="setting_player_light_tuning">播放页光效调节</string>
+    <string name="setting_player_light_tuning_desc">显示全屏播放页的光效调参悬浮入口，参数即时生效</string>
 </resources>

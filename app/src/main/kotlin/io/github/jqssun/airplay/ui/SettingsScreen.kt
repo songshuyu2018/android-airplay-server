@@ -44,6 +44,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
     val alacEnabled by viewModel.pref(Prefs.ALAC_ENABLED).collectAsState()
     val aacEnabled by viewModel.pref(Prefs.AAC_ENABLED).collectAsState()
     val resolution by viewModel.pref(Prefs.RESOLUTION).collectAsState()
+    val playerLightTuning by viewModel.pref(Prefs.PLAYER_LIGHT_TUNING).collectAsState()
     val idlePreview by viewModel.pref(Prefs.IDLE_PREVIEW).collectAsState()
     val autoFullscreen by viewModel.pref(Prefs.AUTO_FULLSCREEN).collectAsState()
     val keepScreenOn by viewModel.pref(Prefs.KEEP_SCREEN_ON).collectAsState()
@@ -195,6 +196,13 @@ fun SettingsScreen(viewModel: MainViewModel) {
         }
 
         SectionHeader(stringResource(R.string.section_display))
+
+        SettingSwitch(
+            title = stringResource(R.string.setting_player_light_tuning),
+            description = stringResource(R.string.setting_player_light_tuning_desc),
+            checked = playerLightTuning,
+            onCheckedChange = { viewModel.set(Prefs.PLAYER_LIGHT_TUNING, it) }
+        )
 
         SettingSwitch(
             title = stringResource(R.string.setting_auto_fullscreen),

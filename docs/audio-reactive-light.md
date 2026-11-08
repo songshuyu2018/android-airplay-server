@@ -165,3 +165,34 @@ For the same recording/default parameters, soft-knee expansion p50/p90/p99 is
 4.1/36.2/80.1%, with >=99% expansion drive for about 0.04% of the recording.
 This characterizes control values, not perceived flash coverage. Existing maximum
 extent, native detection, release, saved settings and player layout are preserved.
+
+## Approved preset and record-centred outward halo
+
+User-confirmed preset: sensitivity 200%, gain 150%, heavy-hit boundary 0%, release
+200ms, mid weight 50%, high weight 0%, minimum interval 60ms, response curve 200%.
+The old background-extent value 0% is obsolete: beats now animate a record-centred
+annular halo with a 110% resting diameter and 140% maximum diameter relative to the
+actual vinyl (which occupies 77% of the spectrum square). The background's three
+cached gradients retain their existing bounded random travel and slow zoom; beats
+no longer enlarge/recolor the whole background.
+
+A beat launches a soft ring at 110%. It travels outward over the configured release
+time and fades, rather than expanding instantly then shrinking. Attack strength
+controls distance and opacity, with 140% as the approved maximum. Up to six reused
+pulse slots bound overlap/allocation; the current preset permits at most four live
+200ms pulses at a 60ms trigger interval. Peak growth in the first 35ms updates the
+same pulse without restarting its travel. Pausing or leaving the visible lifecycle
+clears transient rings. Vinyl shadow is drawn below the halo so it cannot hide it;
+record rotation still updates its separate cached hardware layer.
+
+Settings > Display > 播放页光效调节 controls the floating calibration entry. It is
+off by default and requires no overlay permission. Enabling shows the existing
+collapsed entry; disabling removes it and closes the panel. An approved-preset
+version migration applies the values above once, including the new record-based
+extent 140%; subsequent manual tuning is retained. Reset restores this preset.
+The optional maximum extent slider is now 110-200% of vinyl diameter.
+
+The supplied FLAC was replayed through the unchanged native detector with the new
+preset. A 60Hz control/geometry simulation checked 110-140% bounds, bounded pulse
+overlap and cleanup after the end. This is offline verification; Android layout,
+perceived halo strength and real output timing still require device testing.

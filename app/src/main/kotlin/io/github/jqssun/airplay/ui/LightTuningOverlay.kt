@@ -57,7 +57,7 @@ internal fun LightTuningOverlay(
             Column(Modifier.padding(horizontal = 16.dp)) { LightMeters(raw, tuning) }
             Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)) {
-                Text("数值即时生效并自动保存；100% 扩张范围可覆盖全屏。",
+                Text("数值即时生效并自动保存；基础光晕110%，扩散范围相对唱片直径。",
                     fontSize = 11.sp, color = Color(0xFFCBD3E4))
                 LightSlider("检测灵敏度", tuning.sensitivity, 50..400, "%", onSave) {
                     onChange(tuning.copy(sensitivity = it))
@@ -72,7 +72,7 @@ internal fun LightTuningOverlay(
                     onChange(tuning.copy(curve = it))
                 }
                 Text("曲线低于100%提升弱拍，高于100%突出重拍。", fontSize = 11.sp, color = Color(0xFFCBD3E4))
-                LightSlider("最大扩张范围", tuning.extent, 0..200, "%", onSave) {
+                LightSlider("唱片最大扩散", tuning.extent, 110..200, "%", onSave) {
                     onChange(tuning.copy(extent = it))
                 }
                 LightSlider("柔和回落时间", tuning.release, 80..600, "ms", onSave) {

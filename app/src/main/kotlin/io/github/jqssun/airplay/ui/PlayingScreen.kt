@@ -85,6 +85,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     val connections by viewModel.connectionCount.collectAsState()
     val audioOnly by viewModel.audioOnly.collectAsState()
     val reportedPlaying by viewModel.audioPlaying.collectAsState()
+    val lightTuningEnabled by viewModel.pref(Prefs.PLAYER_LIGHT_TUNING).collectAsState()
     val controlsReady by viewModel.audioControlsReady.collectAsState()
     val connected = connections > 0 && audioOnly
     val playing = connected && reportedPlaying
@@ -96,6 +97,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     var lightTuning by remember(lightPrefs) { mutableStateOf(LightTuning.load(lightPrefs)) }
     val latestTuning by rememberUpdatedState(lightTuning)
     var tuningOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(lightTuningEnabled) { if (!lightTuningEnabled) tuningOpen = false }
     DisposableEffect(lightPrefs) { onDispose { latestTuning.save(lightPrefs) } }
     val angle = remember { mutableFloatStateOf(0f) }
     val spectrum = remember { mutableStateOf(FloatArray(48)) }
@@ -192,11 +194,12 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         val controlGap = (if (compact) 16.dp else 26.dp) * controlScale
         val titleSize = minOf(if (square) 28f else if (compact) 27f else 40f,
             detailsWidth.value * .12f).coerceAtLeast(18f).sp
-        PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue }, beat = { lightBeat.floatValue }, tuning = lightTuning)
+        PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue })
         Row(Modifier.fillMaxSize().padding(horizontal = edge).padding(top = topGap, bottom = if (compact) 18.dp else 40.dp), verticalAlignment = Alignment.CenterVertically) {
             BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
                 val discSize = minOf(maxWidth, maxHeight)
-                RecordSpectrum(displayCover, colors, { angle.floatValue }, { spectrum.value }, Modifier.size(discSize))
+                RecordSpectrum(displayCover, colors, { angle.floatValue }, { spectrum.value },
+                    { lightBeat.floatValue }, lightTuning, playing, lifecycle, Modifier.size(discSize))
             }
             Spacer(Modifier.width(columnGap))
             Column(Modifier.width(detailsWidth).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.Center) {
@@ -230,7 +233,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             }
             Text("AIRPLAY · 沉浸聆听", color = colors.body, fontSize = 12.sp, fontWeight = FontWeight.Light, letterSpacing = 1.5.sp)
         }
-        LightTuningOverlay(
+        if (lightTuningEnabled) LightTuningOverlay(
             tuning = lightTuning, raw = { lightBeat.floatValue }, open = tuningOpen,
             onOpen = { tuningOpen = it }, onChange = { lightTuning = it },
             onSave = { lightTuning.save(lightPrefs) },
@@ -318,7 +321,7 @@ private class LightDrift {
 
 @Composable
 private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Lifecycle?,
-    energy: () -> Float, beat: () -> Float, tuning: LightTuning) {
+    energy: () -> Float) {
     val lights = remember { Array(3) { LightDrift() } }
     val frame = remember { mutableLongStateOf(0L) }
     LaunchedEffect(playing, lifecycle) {
@@ -362,48 +365,31 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
         val leftRestGradient = Brush.radialGradient(
             listOf(leftRestColor.copy(alpha = .95f), leftRestColor.copy(alpha = 0f)),
             center = Offset.Zero, radius = radii[0])
-        // Paint the beat-driven left wash last so a strong hit can reach all four
-        // corners without being covered by the right/background light layers.
+        // Preserve the existing ambient gradients and random drift. Beat waves
+        // are drawn separately around the record, not over the entire background.
         val drawOrder = intArrayOf(1, 2, 0)
         onDrawBehind {
             // Only this draw node observes the clock; layout and the record stay
             // independent. Both left color variants are cached, not rebuilt per beat.
             frame.longValue
             drawRect(base)
-            val rawBeat = beat()
-            val impact = tuning.impact(rawBeat)
-            val expansion = tuning.expansion(rawBeat)
-            val colorImpact = impact.pow(.8f)
             val breath = .94f + energy() * .06f
             for (index in drawOrder) {
                 val light = lights[index]
                 val center = centers[index]
                 val x = center.x + light.x * width
                 val y = center.y + light.y * height
-                var sx = light.scaleX * light.zoom
-                var sy = light.scaleY * light.zoom
-                if (index == 0) {
-                    val farX = maxOf(abs(x), abs(width - x))
-                    val farY = maxOf(abs(y), abs(height - y))
-                    // The furthest corner remains inside the soft fade at max impact.
-                    // Compute this from the moving center for any display aspect ratio.
-                    val fullRadius = maxOf(sqrt(farX * farX + farY * farY) * 1.35f,
-                        radii[0] * maxOf(sx, sy) * 1.8f)
-                    val fullScale = fullRadius / radii[0] * tuning.extent / 100f
-                    sx += (maxOf(sx, fullScale) - sx) * expansion
-                    sy += (maxOf(sy, fullScale) - sy) * expansion
-                }
+                val sx = light.scaleX * light.zoom
+                val sy = light.scaleY * light.zoom
                 withTransform({
                     translate(x, y)
                     scale(sx, sy, pivot = Offset.Zero)
                 }) {
                     if (index == 0) {
-                        // Quiet: a pale wash. Heavy hit: stronger album color over
-                        // the same expanding shape; all RGB values retain the safe floor.
+                        // Retain the pale left ambient wash while its random
+                        // position/zoom continues independently of drum attacks.
                         drawCircle(leftRestGradient, radii[0], center = Offset.Zero,
                             alpha = light.opacity * breath)
-                        if (impact > .001f) drawCircle(gradients[0], radii[0], center = Offset.Zero,
-                            alpha = light.opacity * colorImpact)
                     } else {
                         drawCircle(gradients[index], radii[index], center = Offset.Zero,
                             alpha = light.opacity * breath)
@@ -415,14 +401,19 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
 }
 
 @Composable
-private fun RecordSpectrum(cover: ImageBitmap?, colors: PlayerColors, angle: () -> Float, spectrum: () -> FloatArray, modifier: Modifier) {
+private fun RecordSpectrum(cover: ImageBitmap?, colors: PlayerColors, angle: () -> Float,
+    spectrum: () -> FloatArray, beat: () -> Float, tuning: LightTuning, playing: Boolean,
+    lifecycle: Lifecycle?, modifier: Modifier) {
     Box(modifier, contentAlignment = Alignment.Center) {
+        // Shadow below the halo, so it cannot darken the expanding colored ring.
+        Box(Modifier.fillMaxSize(.77f).shadow(24.dp, CircleShape)
+            .background(Color(0xFF17151D), CircleShape))
+        RecordBeatHalo(colors, beat, tuning, playing, lifecycle, Modifier.fillMaxSize())
         // Cache all trigonometry and shaders. Reading the bands only in the draw
         // phase invalidates this spectrum layer, not the rotating record.
         Box(Modifier.fillMaxSize().graphicsLayer().drawWithCache {
             val center = Offset(size.width / 2, size.height / 2)
             val unit = size.minDimension
-            val halo = Brush.radialGradient(listOf(colors.accent.copy(alpha = .08f), Color.Transparent), center, unit * .5f)
             val directions = Array(96) { i ->
                 val radians = (i / 96f * 2 * PI - PI / 2).toFloat()
                 Offset(cos(radians), sin(radians))
@@ -430,7 +421,6 @@ private fun RecordSpectrum(cover: ImageBitmap?, colors: PlayerColors, angle: () 
             val starts = Array(96) { center + directions[it] * (unit * .435f) }
             val width = (unit * .0055f).coerceAtLeast(1f)
             onDrawBehind {
-                drawCircle(halo, unit * .5f, center)
                 val bands = spectrum()
                 for (i in 0 until 96) {
                     val amplitude = bands[if (i < 48) i else 95 - i]
@@ -442,7 +432,7 @@ private fun RecordSpectrum(cover: ImageBitmap?, colors: PlayerColors, angle: () 
         })
         // Keep the shadow stationary and rasterize the disc once into its own
         // layer. Each vsync updates only rotationZ on that cached layer.
-        Box(Modifier.fillMaxSize(.77f).shadow(24.dp, CircleShape)) {
+        Box(Modifier.fillMaxSize(.77f)) {
             Box(Modifier.fillMaxSize().graphicsLayer {
                 rotationZ = angle()
                 compositingStrategy = CompositingStrategy.Offscreen
@@ -537,4 +527,90 @@ private fun PlayerProgress(viewModel: MainViewModel, accent: Color) {
         Text(playerTime(position), color = accent, fontSize = 11.sp)
         Text(if (duration > 0) playerTime(duration) else "--:--", color = accent, fontSize = 11.sp)
     }
+}
+
+private class RecordPulse {
+    var age = Float.POSITIVE_INFINITY
+    var strength = 0f
+}
+
+/** An outward, fading wave around the actual vinyl, independent of rotation. */
+@Composable
+private fun RecordBeatHalo(colors: PlayerColors, beat: () -> Float, tuning: LightTuning,
+    playing: Boolean, lifecycle: Lifecycle?, modifier: Modifier) {
+    val pulses = remember { Array(6) { RecordPulse() } }
+    val frame = remember { mutableLongStateOf(0L) }
+    val latestTuning by rememberUpdatedState(tuning)
+    LaunchedEffect(playing, lifecycle) {
+        for (pulse in pulses) pulse.age = Float.POSITIVE_INFINITY
+        frame.longValue++
+        if (playing) lifecycle?.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            var previousTime = 0L
+            var previousBeat = 0f
+            var lastLaunch = 0L
+            var next = 0
+            var active = -1
+            try {
+                while (isActive) withFrameNanos { now ->
+                    val dt = if (previousTime == 0L) 0f else
+                        ((now - previousTime) / 1e9f).coerceIn(0f, .1f)
+                    previousTime = now
+                    for (pulse in pulses) pulse.age += dt
+                    val raw = beat()
+                    val strength = latestTuning.expansion(raw)
+                    val canLaunch = lastLaunch == 0L ||
+                        now - lastLaunch >= latestTuning.interval * 1000000L
+                    if (raw >= .015f && raw > previousBeat + .008f && canLaunch) {
+                        pulses[next].age = 0f
+                        pulses[next].strength = strength
+                        active = next
+                        next = (next + 1) % pulses.size
+                        lastLaunch = now
+                    } else if (active >= 0 && pulses[active].age < .035f) {
+                        // Native attack peaks can arrive over several frames. Update
+                        // intensity without restarting the outward motion.
+                        pulses[active].strength = maxOf(pulses[active].strength, strength)
+                    }
+                    previousBeat = raw
+                    frame.longValue++
+                }
+            } finally {
+                for (pulse in pulses) pulse.age = Float.POSITIVE_INFINITY
+                frame.longValue++
+            }
+        }
+    }
+    Box(modifier.drawWithCache {
+        val center = Offset(size.width / 2, size.height / 2)
+        // Vinyl itself occupies 77% of RecordSpectrum's square, not the cover art.
+        val discRadius = size.minDimension * .77f / 2
+        val baseRadius = discRadius * 1.10f
+        val maximumScale = tuning.extent / 100f
+        val ring = Brush.radialGradient(
+            0f to Color.Transparent,
+            .78f to Color.Transparent,
+            .88f to colors.secondaryGlow.copy(alpha = .25f),
+            .94f to colors.glow.copy(alpha = .95f),
+            .98f to colors.glow.copy(alpha = .4f),
+            1f to Color.Transparent,
+            center = Offset.Zero, radius = 1f
+        )
+        val duration = tuning.release / 1000f
+        onDrawBehind {
+            frame.longValue
+            withTransform({ translate(center.x, center.y); scale(baseRadius, baseRadius, pivot = Offset.Zero) }) {
+                drawCircle(ring, 1f, Offset.Zero, alpha = .45f)
+            }
+            for (pulse in pulses) {
+                if (pulse.age >= duration || pulse.strength <= .001f) continue
+                val progress = (pulse.age / duration).coerceIn(0f, 1f)
+                val travel = 1f - (1f - progress) * (1f - progress)
+                val radius = discRadius * (1.10f + (maximumScale - 1.10f) * pulse.strength * travel)
+                val alpha = (pulse.strength * (1f - progress).pow(1.2f)).coerceIn(0f, 1f)
+                withTransform({ translate(center.x, center.y); scale(radius, radius, pivot = Offset.Zero) }) {
+                    drawCircle(ring, 1f, Offset.Zero, alpha = alpha)
+                }
+            }
+        }
+    })
 }

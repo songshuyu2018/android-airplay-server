@@ -112,6 +112,7 @@ object Prefs {
     val ADVERTISE_VIDEO = bool("advertise_video", true, restart = true)
     val ADVERTISE_MIRRORING = bool("advertise_mirroring", true, restart = true)
     val ADVERTISE_AUDIO = bool("advertise_audio", true, restart = true)
+    val PLAYER_LIGHT_TUNING = bool("player_light_tuning", false)
     val AUDIO_IDLE_RETURN_HOME = bool("audio_idle_return_home", true)
     val LAUNCH_ON_CONNECT = bool("launch_on_connect", true)
     val USB_ONLY = bool("usb_only", false, restart = true)

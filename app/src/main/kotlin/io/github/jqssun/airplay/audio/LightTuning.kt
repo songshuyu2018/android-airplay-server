@@ -5,15 +5,15 @@ import kotlin.math.pow
 
 /** Percentages stay integral so values can be read back and reproduced exactly. */
 data class LightTuning(
-    val sensitivity: Int = 150,
-    val gain: Int = 100,
-    val threshold: Int = 25,
-    val release: Int = 240,
-    val mid: Int = 60,
-    val high: Int = 20,
-    val interval: Int = 140,
-    val extent: Int = 100,
-    val curve: Int = 100,
+    val sensitivity: Int = 200,
+    val gain: Int = 150,
+    val threshold: Int = 0,
+    val release: Int = 200,
+    val mid: Int = 50,
+    val high: Int = 0,
+    val interval: Int = 60,
+    val extent: Int = 140,
+    val curve: Int = 200,
 ) {
     fun impact(raw: Float): Float = (raw * gain / 100f).coerceIn(0f, 1f)
     fun expansion(raw: Float): Float {
@@ -29,25 +29,32 @@ data class LightTuning(
         return response.coerceIn(0f, 1f).pow(curve / 100f)
     }
     fun summary() = "灵敏度=$sensitivity%, 增益=$gain%, 重拍分界=$threshold%, " +
-        "最大扩张范围=$extent%, 回落=${release}ms, 中频=$mid%, 高频=$high%, 间隔=${interval}ms, 响应曲线=$curve%"
+        "唱片最大扩散=$extent%, 回落=${release}ms, 中频=$mid%, 高频=$high%, 间隔=${interval}ms, 响应曲线=$curve%"
     fun save(prefs: SharedPreferences) {
         prefs.edit().putInt("light_sensitivity", sensitivity).putInt("light_gain", gain)
             .putInt("light_threshold", threshold).putInt("light_release", release)
             .putInt("light_mid", mid).putInt("light_high", high)
             .putInt("light_interval", interval).putInt("light_extent", extent)
-            .putInt("light_curve", curve).apply()
+            .putInt("light_curve", curve).putInt("light_profile_version", 2).apply()
     }
     companion object {
-        fun load(prefs: SharedPreferences) = LightTuning(
-            sensitivity = prefs.getInt("light_sensitivity", 150).coerceIn(50, 400),
-            gain = prefs.getInt("light_gain", 100).coerceIn(50, 800),
-            threshold = prefs.getInt("light_threshold", 25).coerceIn(0, 90),
-            release = prefs.getInt("light_release", 240).coerceIn(80, 600),
-            mid = prefs.getInt("light_mid", 60).coerceIn(0, 100),
-            high = prefs.getInt("light_high", 20).coerceIn(0, 100),
-            interval = prefs.getInt("light_interval", 140).coerceIn(60, 300),
-            extent = prefs.getInt("light_extent", 100).coerceIn(0, 200),
-            curve = prefs.getInt("light_curve", 100).coerceIn(50, 250),
-        )
+        fun load(prefs: SharedPreferences): LightTuning {
+            // Adopt the user-approved record-halo preset once on upgrade, then
+            // retain any subsequent adjustments made through the optional panel.
+            val defaults = LightTuning()
+            if (prefs.getInt("light_profile_version", 0) != 2)
+                return defaults.also { it.save(prefs) }
+            return LightTuning(
+                sensitivity = prefs.getInt("light_sensitivity", defaults.sensitivity).coerceIn(50, 400),
+                gain = prefs.getInt("light_gain", defaults.gain).coerceIn(50, 800),
+                threshold = prefs.getInt("light_threshold", defaults.threshold).coerceIn(0, 90),
+                release = prefs.getInt("light_release", defaults.release).coerceIn(80, 600),
+                mid = prefs.getInt("light_mid", defaults.mid).coerceIn(0, 100),
+                high = prefs.getInt("light_high", defaults.high).coerceIn(0, 100),
+                interval = prefs.getInt("light_interval", defaults.interval).coerceIn(60, 300),
+                extent = prefs.getInt("light_extent", defaults.extent).coerceIn(110, 200),
+                curve = prefs.getInt("light_curve", defaults.curve).coerceIn(50, 250),
+            )
+        }
     }
 }
