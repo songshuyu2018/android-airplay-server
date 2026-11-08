@@ -51,7 +51,8 @@ object NativeBridge {
                                             lowLatency: Boolean, benchmarkLog: Boolean): Boolean
     external fun nativeServerAudioStart(handle: Long): Boolean
     /** 48 display bands, then a timestamp-decayed PCM onset envelope (0..1). */
-    external fun nativeAudioSpectrum(handle: Long, enabled: Boolean): FloatArray
+    external fun nativeAudioSpectrum(handle: Long, enabled: Boolean, sensitivity: Float,
+        midWeight: Float, highWeight: Float, intervalMs: Int, releaseMs: Int): FloatArray
     external fun nativeServerAudioStop(handle: Long)
     external fun nativeServerAudioSetClientGain(handle: Long, gain: Float)
     external fun nativeServerAudioFormat(handle: Long, ct: Int, spf: Int)

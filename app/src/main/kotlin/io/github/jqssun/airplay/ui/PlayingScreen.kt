@@ -1,6 +1,9 @@
 package io.github.jqssun.airplay.ui
 
 import android.app.Activity
+import android.content.Context
+import io.github.jqssun.airplay.Prefs
+import io.github.jqssun.airplay.audio.LightTuning
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import androidx.compose.animation.animateColorAsState
@@ -88,6 +91,12 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     val latestPlaying by rememberUpdatedState(playing)
     val activity = LocalContext.current as? Activity
     val lifecycle = (activity as? LifecycleOwner)?.lifecycle
+    val context = LocalContext.current
+    val lightPrefs = remember(context) { context.getSharedPreferences(Prefs.NAME, Context.MODE_PRIVATE) }
+    var lightTuning by remember(lightPrefs) { mutableStateOf(LightTuning.load(lightPrefs)) }
+    val latestTuning by rememberUpdatedState(lightTuning)
+    var tuningOpen by remember { mutableStateOf(false) }
+    DisposableEffect(lightPrefs) { onDispose { latestTuning.save(lightPrefs) } }
     val angle = remember { mutableFloatStateOf(0f) }
     val spectrum = remember { mutableStateOf(FloatArray(48)) }
     val lightEnergy = remember { mutableFloatStateOf(0f) }
@@ -139,7 +148,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                     val dt = if (previous == 0L) 1f / 60f else
                         ((now - previous) / 1e9f).coerceIn(0f, .1f)
                     previous = now
-                    val values = viewModel.audioSpectrum(latestPlaying)
+                    val values = viewModel.audioSpectrum(latestPlaying, latestTuning)
                     if (latestPlaying && values.isNotEmpty()) {
                         var sum = 0f
                         for (i in 0 until minOf(16, values.size)) {
@@ -183,7 +192,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         val controlGap = (if (compact) 16.dp else 26.dp) * controlScale
         val titleSize = minOf(if (square) 28f else if (compact) 27f else 40f,
             detailsWidth.value * .12f).coerceAtLeast(18f).sp
-        PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue }, beat = { lightBeat.floatValue })
+        PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue }, beat = { lightBeat.floatValue }, tuning = lightTuning)
         Row(Modifier.fillMaxSize().padding(horizontal = edge).padding(top = topGap, bottom = if (compact) 18.dp else 40.dp), verticalAlignment = Alignment.CenterVertically) {
             BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
                 val discSize = minOf(maxWidth, maxHeight)
@@ -221,6 +230,15 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             }
             Text("AIRPLAY · 沉浸聆听", color = colors.body, fontSize = 12.sp, fontWeight = FontWeight.Light, letterSpacing = 1.5.sp)
         }
+        LightTuningOverlay(
+            tuning = lightTuning, raw = { lightBeat.floatValue }, open = tuningOpen,
+            onOpen = { tuningOpen = it }, onChange = { lightTuning = it },
+            onSave = { lightTuning.save(lightPrefs) },
+            onReset = { lightTuning = LightTuning(); lightTuning.save(lightPrefs) },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)
+                .widthIn(max = minOf(380.dp, maxWidth - 24.dp))
+                .heightIn(max = maxHeight * .85f)
+        )
     }
 }
 
@@ -300,7 +318,7 @@ private class LightDrift {
 
 @Composable
 private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Lifecycle?,
-    energy: () -> Float, beat: () -> Float) {
+    energy: () -> Float, beat: () -> Float, tuning: LightTuning) {
     val lights = remember { Array(3) { LightDrift() } }
     val frame = remember { mutableLongStateOf(0L) }
     LaunchedEffect(playing, lifecycle) {
@@ -352,12 +370,10 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
             // independent. Both left color variants are cached, not rebuilt per beat.
             frame.longValue
             drawRect(base)
-            val impact = beat().coerceIn(0f, 1f)
-            // Ordinary onsets add a little color. Only the top of the attack range
-            // expands towards the screen corners; do not amplify weak values.
-            val heavy = ((impact - .55f) / .45f).coerceIn(0f, 1f)
-            val expansion = heavy * heavy
-            val colorImpact = impact * impact
+            val rawBeat = beat()
+            val impact = tuning.impact(rawBeat)
+            val expansion = tuning.expansion(rawBeat)
+            val colorImpact = impact
             val breath = .94f + energy() * .06f
             for (index in drawOrder) {
                 val light = lights[index]
@@ -373,9 +389,9 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
                     // Compute this from the moving center for any display aspect ratio.
                     val fullRadius = maxOf(sqrt(farX * farX + farY * farY) * 1.35f,
                         radii[0] * maxOf(sx, sy) * 1.8f)
-                    val fullScale = fullRadius / radii[0]
-                    sx += (fullScale - sx) * expansion
-                    sy += (fullScale - sy) * expansion
+                    val fullScale = fullRadius / radii[0] * tuning.extent / 100f
+                    sx += (maxOf(sx, fullScale) - sx) * expansion
+                    sy += (maxOf(sy, fullScale) - sy) * expansion
                 }
                 withTransform({
                     translate(x, y)

@@ -616,10 +616,12 @@ Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeShairportUsed(
 
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_io_github_jqssun_airplay_bridge_NativeBridge_nativeAudioSpectrum(
-        JNIEnv *env, jobject, jlong handle, jboolean enabled) {
+        JNIEnv *env, jobject, jlong handle, jboolean enabled, jfloat sensitivity, jfloat midWeight,
+        jfloat highWeight, jint intervalMs, jint releaseMs) {
     server_ctx_t *ctx = (server_ctx_t *)(intptr_t)handle;
+    const AudioLightConfig config{sensitivity, midWeight, highWeight, intervalMs, releaseMs};
     float bands[49] = {};
-    if (ctx) audio_engine_spectrum(ctx->cb_ctx.audio_engine, bands, enabled);
+    if (ctx) audio_engine_spectrum(ctx->cb_ctx.audio_engine, bands, enabled, &config);
     jfloatArray result = env->NewFloatArray(49);
     if (result) env->SetFloatArrayRegion(result, 0, 49, bands);
     return result;

@@ -75,3 +75,37 @@ expansion begins only above 0.55 and follows a quadratic knee up to 1. This keep
 ordinary accents local while preserving full-screen reach for strong bass hits.
 Additional PCM fixtures check steady noise, slow bass swells, mid-frequency
 accents and a kick following an accent inside the refractory interval.
+
+## On-screen tuning (temporary calibration UI)
+
+The lower-right floating `光效调节` button opens a bounded, scrollable panel. It
+never reserves space in the existing player layout. Sliders show their live integer
+values; two meters remain visible above the scroll area (native envelope and mapped
+visual strength). Changes apply without restarting playback. Values are saved after
+dragging / closing / leaving the screen. Reset restores the calibration defaults;
+Copy exports all eight exact values for later fixing in code.
+
+| Slider | Range | Initial value |
+| --- | --- | --- |
+| Detection sensitivity | 50-400% | 150% |
+| Visual gain | 50-800% | 250% |
+| Expansion knee | 0-90% | 25% |
+| Maximum expansion extent | 0-200% | 100% |
+| Release time constant | 80-600ms | 240ms |
+| Mid-frequency weight | 0-100% | 60% |
+| High-frequency weight | 0-100% | 20% |
+| Minimum trigger interval | 60-300ms | 140ms |
+
+Sensitivity, frequency weights and interval reach the native onset detector through
+JNI; release reaches the native timestamp envelope. Gain, knee and maximum extent
+act only on drawing. Extent 100% is the existing screen-covering target radius;
+0% retains the drifting rest-size glow, 200% doubles the target radius. It never
+shrinks the rest-size glow. The release control is an exponential time constant,
+not a fixed duration until fully dark.
+
+The strict four-way product suppressed mixed/mastered tracks too much. Novelty
+still gates attacks, but rise/contrast now form a blended quality weight, retaining
+a modest response instead of multiplying every sub-maximal measure towards zero.
+Native sensitivity still acts before rejection, so it can recover weak attacks that
+post-detection visual gain cannot. Changing it preserves analysis history; resets
+preserve tuning. PCM tests check this native sensitivity behavior and reset handling.

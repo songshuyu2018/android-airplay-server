@@ -14,6 +14,10 @@ class AudioSpectrum {
 public:
     static constexpr size_t N = 1024, HOP = 256, CAPACITY = 8192, MAX_HOPS = 12;
     static constexpr int BANDS = 48, VALUES = BANDS + 1; // final value: onset envelope
+    void configure(const AudioLightConfig& config) {
+        mOnset.configure(config);
+        mRelease = std::clamp(config.releaseMs, 80, 600) / 1000.f;
+    }
     void enabled(bool value) {
         if (mEnabled.exchange(value) != value) {
             mStart = mReadEnd = mCursor.load();
@@ -95,7 +99,7 @@ private:
         if (!mPulseTime) return 0;
         const float age = std::max(0.f, float((now - mPulseTime) / 1e9));
         // Timestamped release continues across short underflows/end of PCM.
-        return age > 1.5f ? 0.f : mPulseStrength * std::exp(-age / .20f);
+        return age > 1.5f ? 0.f : mPulseStrength * std::exp(-age / mRelease);
     }
     void analyse(const int16_t* pcm, size_t frame, int rate) {
         std::array<std::complex<float>, N> values;
@@ -152,6 +156,7 @@ private:
     int64_t mPulseTime = 0;
     uint64_t mPulseFrame = 0;
     float mPulseStrength = 0;
+    float mRelease = .20f;
     AudioOnset mOnset;
     std::array<float, BANDS> mBands{};
 };

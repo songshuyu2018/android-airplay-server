@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include "audio_light_config.h"
 
 // Original positive spectral flux / adaptive threshold implementation.
 // Design references (no source copied): aubio specflux and LedFx's separate
@@ -11,7 +12,14 @@
 class AudioOnset {
 public:
     static constexpr size_t BINS = 513;
-    void reset() { *this = AudioOnset{}; }
+    void reset() { const auto config = mConfig; *this = AudioOnset{}; mConfig = config; }
+    void configure(const AudioLightConfig& config) {
+        mConfig = config;
+        mConfig.sensitivity = std::isfinite(config.sensitivity) ? std::clamp(config.sensitivity, .5f, 4.f) : 1.f;
+        mConfig.midWeight = std::isfinite(config.midWeight) ? std::clamp(config.midWeight, 0.f, 1.f) : .32f;
+        mConfig.highWeight = std::isfinite(config.highWeight) ? std::clamp(config.highWeight, 0.f, 1.f) : .08f;
+        mConfig.intervalMs = std::clamp(config.intervalMs, 60, 300);
+    }
     void process(const std::array<float, BINS>& magnitude, float rms,
                  uint64_t frame, int rate, int hop) {
         std::array<float, 3> flux{};
@@ -35,7 +43,7 @@ public:
         for (int g = 0; g < 3; ++g) {
             flux[g] /= std::sqrt(float(std::max(1, counts[g])));
             const float threshold = .003f + mean[g] * 2.f + 1.2f * std::sqrt(variance[g]);
-            const float score = flux[g] / threshold;
+            const float score = flux[g] * mConfig.sensitivity / threshold;
             const float energy = std::sqrt(power[g]);
             const float novelty = std::clamp((score - 1.1f) / 3.f, 0.f, 1.f);
             const float rise = std::clamp((energy - previousEnergy[g]) /
@@ -43,20 +51,19 @@ public:
             const float contrast = std::clamp((energy - energyMean[g] * 1.2f) /
                 std::max(.02f, energyMean[g]), 0.f, 1.f);
             const float loudness = std::clamp(rms / std::max(.12f, level), 0.f, 1.f);
-            // A loud sustained sound is not a heavy beat. Require spectral novelty,
-            // a fast band-energy attack and contrast against its recent background.
-            // Only a bass attack may drive full-screen expansion; vocals/high hats
-            // remain small even when they are loud.
-            const float weight = g == 0 ? std::clamp(bassShare / .45f, 0.f, 1.f) : g == 1 ? .32f : .08f;
-            strength = std::max(strength, novelty * rise * contrast * loudness * weight);
+            // Novelty gates the attack. Blend attack quality instead of multiplying
+            // four suppressors: mixed/mastered music rarely maximizes them together.
+            // Frequency weights and detection sensitivity are independently tunable.
+            const float weight = g == 0 ? std::clamp(bassShare / .45f, 0.f, 1.f) : g == 1 ? mConfig.midWeight : mConfig.highWeight;
+            strength = std::max(strength, novelty * (.25f + .75f * std::sqrt(rise * contrast)) * (.35f + .65f * loudness) * weight);
             previousEnergy[g] = energy;
             energyMean[g] += (1.f - std::exp(-dt / .35f)) * (energy - energyMean[g]);
         }
         // A small consonant/hat immediately before a kick must not lock it out.
         const bool upgrade = hasEvent && eventStrength < .4f && strength > .6f &&
             frame - eventFrame >= uint64_t(rate * .035f);
-        if (primed && rms > .0018f && strength > .025f &&
-            (!hasEvent || frame - eventFrame >= uint64_t(rate * .14f) || upgrade)) {
+        if (primed && rms > .0018f && strength > .025f / mConfig.sensitivity &&
+            (!hasEvent || frame - eventFrame >= uint64_t(rate * mConfig.intervalMs / 1000.f) || upgrade)) {
             eventFrame = frame;
             eventStrength = strength;
             hasEvent = true;
@@ -79,6 +86,7 @@ public:
 private:
     std::array<float, BINS> previous{};
     std::array<float, 3> mean{}, variance{}, previousEnergy{}, energyMean{};
+    AudioLightConfig mConfig{1.f, .32f, .08f, 140, 200};
     float level = .08f;
     bool primed = false;
 };

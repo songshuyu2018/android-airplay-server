@@ -1,5 +1,6 @@
 package io.github.jqssun.airplay.viewmodel
 
+import io.github.jqssun.airplay.audio.LightTuning
 import android.app.Application
 import android.content.Context
 import android.content.Intent
@@ -203,7 +204,7 @@ class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app
     fun toggleAudioPlayback() { service?.togglePlayPause() }
     fun previousAudioTrack() { service?.dacpController?.prevItem() }
     fun nextAudioTrack() { service?.dacpController?.nextItem() }
-    fun audioSpectrum(enabled: Boolean) = service?.audioSpectrum(enabled) ?: FloatArray(49)
+    fun audioSpectrum(enabled: Boolean, tuning: LightTuning = LightTuning()) = service?.audioSpectrum(enabled, tuning) ?: FloatArray(49)
 
     // logs
     private val _logs = MutableStateFlow<List<String>>(emptyList())

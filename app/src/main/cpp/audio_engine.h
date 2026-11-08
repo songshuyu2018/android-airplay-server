@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "audio_light_config.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -37,7 +38,7 @@ void audio_engine_on_format(AudioEngine *engine, int ct, int spf);
 bool audio_engine_start(AudioEngine *engine);
 // Output: 48 display bands followed by a timestamp-decayed onset strength.
 // Caller must provide space for 49 floats.
-void audio_engine_spectrum(AudioEngine *engine, float *bands, bool enabled);
+void audio_engine_spectrum(AudioEngine *engine, float *bands, bool enabled, const AudioLightConfig *config);
 
 /* pause playout, releases audio output devices while paused; idempotent */
 void audio_engine_pause(AudioEngine *engine);

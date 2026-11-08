@@ -1,5 +1,6 @@
 package io.github.jqssun.airplay.service
 
+import io.github.jqssun.airplay.audio.LightTuning
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -1438,8 +1439,9 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         _updateMediaNotification()
     }
 
-    fun audioSpectrum(enabled: Boolean): FloatArray =
-        if (nativeHandle != 0L) NativeBridge.nativeAudioSpectrum(nativeHandle, enabled) else FloatArray(49)
+    fun audioSpectrum(enabled: Boolean, tuning: LightTuning = LightTuning()): FloatArray =
+        if (nativeHandle != 0L) NativeBridge.nativeAudioSpectrum(nativeHandle, enabled, tuning.sensitivity / 100f,
+            tuning.mid / 100f, tuning.high / 100f, tuning.interval, tuning.release) else FloatArray(49)
 
     private fun pauseAudioLocally() {
         audioRenderer.silenceForFiveSeconds()

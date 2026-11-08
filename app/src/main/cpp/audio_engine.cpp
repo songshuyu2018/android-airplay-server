@@ -108,9 +108,9 @@ struct AudioEngine {
         mQueued[i].store(CodecFormat{spf}, std::memory_order_release);
     }
 
-    void spectrum(float *bands, bool enabled) {
+    void spectrum(float *bands, bool enabled, const AudioLightConfig *config) {
         std::unique_lock<std::mutex> lk(mRebuildLock, std::try_to_lock);
-        if (lk.owns_lock() && mTimeline) mTimeline->spectrum(bands, enabled);
+        if (lk.owns_lock() && mTimeline) mTimeline->spectrum(bands, enabled, config);
     }
 
     bool copyDebug(void *dst, size_t dstLen) {
@@ -282,6 +282,6 @@ void audio_engine_decode(AudioEngine *engine, const uint8_t *data, int len, int 
 
 }
 
-extern "C" void audio_engine_spectrum(AudioEngine *engine, float *bands, bool enabled) {
-    if (engine) engine->spectrum(bands, enabled);
+extern "C" void audio_engine_spectrum(AudioEngine *engine, float *bands, bool enabled, const AudioLightConfig *config) {
+    if (engine) engine->spectrum(bands, enabled, config);
 }

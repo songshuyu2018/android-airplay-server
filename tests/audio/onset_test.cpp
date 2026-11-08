@@ -68,7 +68,7 @@ int main() {
                 const double delay = hit.time - (1. + index * .5);
                 assert(delay >= 0 && delay < .025 + poll * 256. / rate);
                 if (index % 2 == 0) strong[index / 2] = true;
-                else assert(hit.strength < .4f);
+                else assert(hit.strength < .65f);
                 if (kind == 3) assert(hit.strength <= .321f); // broadband != bass drum
             }
             for (bool detected : strong) assert(detected);
@@ -88,6 +88,38 @@ int main() {
     for (int kind : {4, 5, 6}) {
         auto hits = run(44100, 3, kind);
         for (auto hit : hits) assert(hit.strength <= (kind == 5 ? .15f : .321f));
+    }
+    // Sensitivity acts before the native gate; it can recover a small transient
+    // which visual gain alone could never amplify after rejection.
+    {
+        AudioOnset low, high;
+        low.configure({.5f, .6f, .2f, 140, 240});
+        high.configure({4.f, .6f, .2f, 140, 240});
+        std::array<float, AudioOnset::BINS> magnitude{};
+        low.process(magnitude, .01f, 1024, 44100, 256);
+        high.process(magnitude, .01f, 1024, 44100, 256);
+        magnitude[2] = .0001f;
+        low.process(magnitude, .01f, 1280, 44100, 256);
+        high.process(magnitude, .01f, 1280, 44100, 256);
+        assert(!low.hasEvent && high.hasEvent);
+        high.reset(); // Configuration survives lifecycle / stale-history reset.
+        magnitude.fill(0);
+        high.process(magnitude, .01f, 2048, 44100, 256);
+        magnitude[2] = .0001f;
+        high.process(magnitude, .01f, 2304, 44100, 256);
+        assert(high.hasEvent);
+    }
+    {
+        AudioOnset muted, included;
+        muted.configure({1.5f, 0.f, 0.f, 140, 240});
+        included.configure({1.5f, 1.f, 0.f, 140, 240});
+        std::array<float, AudioOnset::BINS> magnitude{};
+        muted.process(magnitude, .1f, 1024, 44100, 256);
+        included.process(magnitude, .1f, 1024, 44100, 256);
+        magnitude[20] = .1f;
+        muted.process(magnitude, .1f, 1280, 44100, 256);
+        included.process(magnitude, .1f, 1280, 44100, 256);
+        assert(!muted.hasEvent && included.eventStrength > .6f);
     }
     // A modest mid-frequency accent 60ms before a kick cannot suppress that kick.
     {
@@ -119,6 +151,14 @@ int main() {
     s.push(data.data(), data.size(), 1); s.read(bands, 44100, &pulse);
     assert(pulse > .5f);
     const float attack = pulse;
+    const int64_t future = monoNs() + 100000000LL;
+    float fast, slow;
+    s.configure({1.5f, .6f, .2f, 140, 80});
+    s.read(bands, 44100, &fast, future);
+    s.configure({1.5f, .6f, .2f, 140, 600});
+    s.read(bands, 44100, &slow, future);
+    assert(slow > fast * 2.f);
+    s.configure({1.f, .32f, .08f, 140, 200});
     std::this_thread::sleep_for(std::chrono::milliseconds(230));
     s.read(bands, 44100, &pulse);
     assert(pulse > 0 && pulse < attack * .4f); // soft release after PCM stops
