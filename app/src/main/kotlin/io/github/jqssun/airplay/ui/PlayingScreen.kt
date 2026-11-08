@@ -373,7 +373,7 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
             val rawBeat = beat()
             val impact = tuning.impact(rawBeat)
             val expansion = tuning.expansion(rawBeat)
-            val colorImpact = impact
+            val colorImpact = impact.pow(.8f)
             val breath = .94f + energy() * .06f
             for (index in drawOrder) {
                 val light = lights[index]

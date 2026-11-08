@@ -83,13 +83,14 @@ never reserves space in the existing player layout. Sliders show their live inte
 values; two meters remain visible above the scroll area (native envelope and mapped
 visual strength). Changes apply without restarting playback. Values are saved after
 dragging / closing / leaving the screen. Reset restores the calibration defaults;
-Copy exports all eight exact values for later fixing in code.
+Copy exports all nine exact values for later fixing in code.
 
 | Slider | Range | Initial value |
 | --- | --- | --- |
 | Detection sensitivity | 50-400% | 150% |
 | Visual gain | 50-800% | 100% |
-| Expansion knee | 0-90% | 25% |
+| Heavy-hit boundary | 0-90% | 25% |
+| Response curve | 50-250% | 100% |
 | Maximum expansion extent | 0-200% | 100% |
 | Release time constant | 80-600ms | 240ms |
 | Mid-frequency weight | 0-100% | 60% |
@@ -140,3 +141,27 @@ separate. New/reset visual gain defaults to 100%; saved tuning is preserved.
 Range tests verify ordering, comparable output after 4x source-quality scaling,
 and no promotion of sub-floor fluctuations. This improves the usable range; it is
 not a drum-source separator and still needs listening tests on real tracks/devices.
+
+## Real-track calibration and continuous visual response
+
+A locally supplied 280.615-second, 44.1kHz stereo FLAC was decoded and passed through
+this exact C++ detector at 256/4096/8192-frame delivery sizes, sensitivity 150/400%.
+No track audio is included in the repository or CI. At sensitivity 150%, gain 100%,
+mid/high weights 60/20%, release 240ms, the observed onset peak p10/p50/p90 values
+were 2.3/13.1/78.3%. The old hard gate plus square made expansion exactly zero for
+78.3% of samples; expansion p90 was only 6.2%. Sensitivity 400% roughly doubled
+onset-event count while its peak median increased only to 15.1%. These are onset
+measurements, not manually annotated drum-beat recall or device latency.
+
+The visual response now has a continuous soft knee: 0-15% travel below the selected
+heavy-hit boundary, then the remaining 85% above it. An added response-curve slider
+(50-250%, default 100%) applies an exponent to that response. A zero boundary uses
+the direct mapped strength to avoid a discontinuity at zero. Zero input remains zero.
+The former gate slider is relabelled heavy-hit boundary; stored values are retained.
+A third live meter shows expansion drive, separately from detected and gained strength.
+Color feedback uses a mild exponent of 0.8, retaining the same cached radial gradients.
+
+For the same recording/default parameters, soft-knee expansion p50/p90/p99 is
+4.1/36.2/80.1%, with >=99% expansion drive for about 0.04% of the recording.
+This characterizes control values, not perceived flash coverage. Existing maximum
+extent, native detection, release, saved settings and player layout are preserved.

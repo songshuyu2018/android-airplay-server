@@ -65,9 +65,13 @@ internal fun LightTuningOverlay(
                 LightSlider("响应增益", tuning.gain, 50..800, "%", onSave) {
                     onChange(tuning.copy(gain = it))
                 }
-                LightSlider("扩张门槛", tuning.threshold, 0..90, "%", onSave) {
+                LightSlider("重拍分界", tuning.threshold, 0..90, "%", onSave) {
                     onChange(tuning.copy(threshold = it))
                 }
+                LightSlider("响应曲线", tuning.curve, 50..250, "%", onSave) {
+                    onChange(tuning.copy(curve = it))
+                }
+                Text("曲线低于100%提升弱拍，高于100%突出重拍。", fontSize = 11.sp, color = Color(0xFFCBD3E4))
                 LightSlider("最大扩张范围", tuning.extent, 0..200, "%", onSave) {
                     onChange(tuning.copy(extent = it))
                 }
@@ -116,7 +120,7 @@ private fun LightMeters(raw: () -> Float, tuning: LightTuning) {
     // Only this small subtree observes per-frame PCM values.
     val detected = raw()
     val mapped = tuning.impact(detected)
-    for ((label, value) in listOf("检测强度" to detected, "映射后强度" to mapped)) {
+    for ((label, value) in listOf("检测强度" to detected, "映射后强度" to mapped, "扩张响应" to tuning.expansion(detected))) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(label, fontSize = 11.sp, modifier = Modifier.weight(1f))
             Text(String.format(Locale.ROOT, "%.1f%%", value * 100), fontSize = 11.sp)
