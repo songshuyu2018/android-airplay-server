@@ -308,6 +308,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             },
             positionMs = ::currentPositionMs,
             setPlaying = ::_setPlaying,
+            onLocalPause = { audioRenderer.silenceForFiveSeconds() },
         )
         mediaSession = MediaSessionCompat(this, "AirPlay").apply {
             setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS)
@@ -329,7 +330,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
                         airPlayVideoPlayer.setPlaying(false)
                         return
                     }
-                    dacpController?.pause()
+                    pauseAudioLocally()
                 }
                 override fun onStop() {
                     if (_videoPlaybackActive.value) stopVideoPlayback() else dacpController?.pause()
@@ -1440,9 +1441,13 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     fun audioSpectrum(enabled: Boolean): FloatArray =
         if (nativeHandle != 0L) NativeBridge.nativeAudioSpectrum(nativeHandle, enabled) else FloatArray(48)
 
+    private fun pauseAudioLocally() {
+        audioRenderer.silenceForFiveSeconds()
+        dacpController?.pause()
+    }
+
     fun togglePlayPause() {
-        val nowPlaying = !_playing.value
-        dacpController?.let { if (nowPlaying) it.play() else it.pause() }
+        if (_playing.value) pauseAudioLocally() else dacpController?.play()
     }
 
     private fun _setPlaying(playing: Boolean) {

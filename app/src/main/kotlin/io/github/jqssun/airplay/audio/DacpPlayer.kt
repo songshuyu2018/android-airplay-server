@@ -18,6 +18,7 @@ class DacpPlayer(
     private val snapshot: () -> Snapshot,
     private val positionMs: () -> Long,
     private val setPlaying: (Boolean) -> Unit,
+    private val onLocalPause: () -> Unit = {},
 ) : SimpleBasePlayer(looper) {
 
     data class Snapshot(
@@ -80,6 +81,7 @@ class DacpPlayer(
     }
 
     override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
+        if (!playWhenReady) onLocalPause()
         val dacp = dacp() ?: return Futures.immediateVoidFuture()
         // HTTP success acknowledges the command, not the sender's playback state.
         return if (playWhenReady) dacp.play() else dacp.pause()

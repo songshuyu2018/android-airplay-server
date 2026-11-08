@@ -74,3 +74,13 @@ Developer settings includes audio_idle_return_home (default true). Disabling it
 suppresses idle CLOSE navigation at dispatch time; playback tracking, automatic
 opening and the original 30-second deadline remain independent. Disabled idle
 expiry leaves Playing visible. Manual back navigation is unaffected.
+
+Local pause (UI, notification and media-session/headset pause) immediately masks
+the native output gain for a fixed five seconds, then sends the usual DACP pause.
+The Media3 player adapter uses the same mask. The mask does not change playback
+state, stop/flush PCM, alter system volume, swallow later commands, or auto-play
+at expiry. Play during the window is forwarded normally but stays silent until
+expiry. Repeated pauses do not extend the window. Sender gain changes are retained
+and the latest gain is restored; detach cancels the pending release callback.
+Device checks: local/headset pause, play again within five seconds, repeated pause,
+volume changes while silent, and disconnect/service stop while the mask is active.

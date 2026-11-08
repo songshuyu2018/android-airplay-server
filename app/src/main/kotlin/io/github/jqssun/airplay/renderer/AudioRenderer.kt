@@ -1,5 +1,7 @@
 package io.github.jqssun.airplay.renderer
 
+import android.os.Handler
+import android.os.Looper
 import io.github.jqssun.airplay.bridge.NativeBridge
 import io.github.jqssun.airplay.viewmodel.AudioDebug
 
@@ -12,16 +14,40 @@ class AudioRenderer {
     @Volatile var clientGain = 1f; private set
 
     private var serverHandle = 0L
+    private val handler = Handler(Looper.getMainLooper())
+    private var temporarilySilent = false
+    private val endSilence = Runnable {
+        synchronized(this) {
+            temporarilySilent = false
+            pushGain()
+        }
+    }
+
+    @Synchronized
+    fun silenceForFiveSeconds() {
+        if (temporarilySilent) return // A fixed window; repeated pauses still go to the sender.
+        temporarilySilent = true
+        pushGain()
+        handler.removeCallbacks(endSilence)
+        handler.postDelayed(endSilence, 5000L)
+    }
+
+    private fun pushGain() {
+        if (serverHandle != 0L) NativeBridge.nativeServerAudioSetClientGain(
+            serverHandle, if (temporarilySilent) 0f else clientGain)
+    }
 
     @Synchronized
     fun attachEngine(server: Long) {
         serverHandle = server
         pushConfig()
-        NativeBridge.nativeServerAudioSetClientGain(serverHandle, clientGain)
+        pushGain()
     }
 
     @Synchronized
     fun detachEngine() {
+        handler.removeCallbacks(endSilence)
+        temporarilySilent = false
         serverHandle = 0L
         codecLabel = ""
     }
@@ -44,7 +70,7 @@ class AudioRenderer {
     @Synchronized
     fun setClientGain(gain: Float) {
         clientGain = gain
-        if (serverHandle != 0L) NativeBridge.nativeServerAudioSetClientGain(serverHandle, gain)
+        pushGain()
     }
 
     @Synchronized
