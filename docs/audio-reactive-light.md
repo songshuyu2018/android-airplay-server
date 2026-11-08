@@ -218,3 +218,28 @@ node observes the animation clock; record rotation, background micro-motion, set
 visibility and lifecycle cleanup remain independent. A local raster approximation
 was inspected for continuous feathered edges and absence of narrow rays; actual
 Android appearance/performance still needs the normal device check.
+
+## Current effect: beat-driven background micro-motion
+
+The record aura/rings/cloud renderer has been removed. The current effect reuses
+only the three existing background gradients, their random targets, minimum travel
+distance, quintic interpolation, gentle shape/opacity changes and 3-second zoom.
+Audio changes their virtual clock speed, not their position, target, radius or color.
+Record spectrum, cached rotation, shadow and layout remain independent.
+
+The approved audio preset is retained. Its gained/curved response drives a target
+speed `1 + response * motionBoost/100`. Default motionBoost 300% permits up to 4x
+speed; 0% keeps the original clock. Speed follows with a 50ms attack and the selected
+release time, and delayed-frame virtual travel is capped at 200ms. The existing
+motion phase is never reset by a beat. Pause/background freeze it; resume starts
+with a fresh frame timestamp and baseline speed, preventing a clock-gap jump.
+
+The optional panel replaces record extent with `鼓点加速强度` (0-600%). Obsolete
+extent is ignored/removed on save; other saved audio settings are preserved. The
+meter is labelled disturbance response. Settings visibility remains off by default.
+No extra cloud/ring shader, pulse pool or overlay animation clock is created.
+
+The local real-track control simulation at 60Hz and approved audio settings stayed
+within 1-4x: median speed 1.19x, p90 2.01x, maximum 3.65x. It returned to 1x after
+PCM ended, with maximum virtual frame step about 61ms. These are offline control
+checks; actual rendering/speaker timing remains subject to device testing.

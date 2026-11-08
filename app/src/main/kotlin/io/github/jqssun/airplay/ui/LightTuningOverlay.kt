@@ -57,7 +57,7 @@ internal fun LightTuningOverlay(
             Column(Modifier.padding(horizontal = 16.dp)) { LightMeters(raw, tuning) }
             Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)) {
-                Text("数值即时生效并自动保存；基础光晕110%，扩散范围相对唱片直径。",
+                Text("数值即时生效并自动保存；鼓点加快背景微动，随后平滑恢复原速。",
                     fontSize = 11.sp, color = Color(0xFFCBD3E4))
                 LightSlider("检测灵敏度", tuning.sensitivity, 50..400, "%", onSave) {
                     onChange(tuning.copy(sensitivity = it))
@@ -72,9 +72,10 @@ internal fun LightTuningOverlay(
                     onChange(tuning.copy(curve = it))
                 }
                 Text("曲线低于100%提升弱拍，高于100%突出重拍。", fontSize = 11.sp, color = Color(0xFFCBD3E4))
-                LightSlider("唱片最大扩散", tuning.extent, 110..200, "%", onSave) {
-                    onChange(tuning.copy(extent = it))
+                LightSlider("鼓点加速强度", tuning.motionBoost, 0..600, "%", onSave) {
+                    onChange(tuning.copy(motionBoost = it))
                 }
+                Text("0%保持原速；300%时重拍最高约4倍速。", fontSize = 11.sp, color = Color(0xFFCBD3E4))
                 LightSlider("柔和回落时间", tuning.release, 80..600, "ms", onSave) {
                     onChange(tuning.copy(release = it))
                 }
@@ -120,7 +121,7 @@ private fun LightMeters(raw: () -> Float, tuning: LightTuning) {
     // Only this small subtree observes per-frame PCM values.
     val detected = raw()
     val mapped = tuning.impact(detected)
-    for ((label, value) in listOf("检测强度" to detected, "映射后强度" to mapped, "扩张响应" to tuning.expansion(detected))) {
+    for ((label, value) in listOf("检测强度" to detected, "映射后强度" to mapped, "扰动响应" to tuning.response(detected))) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(label, fontSize = 11.sp, modifier = Modifier.weight(1f))
             Text(String.format(Locale.ROOT, "%.1f%%", value * 100), fontSize = 11.sp)

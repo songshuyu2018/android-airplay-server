@@ -12,14 +12,14 @@ data class LightTuning(
     val mid: Int = 50,
     val high: Int = 0,
     val interval: Int = 60,
-    val extent: Int = 140,
+    val motionBoost: Int = 300,
     val curve: Int = 200,
 ) {
     fun impact(raw: Float): Float = (raw * gain / 100f).coerceIn(0f, 1f)
-    fun expansion(raw: Float): Float {
+    fun response(raw: Float): Float {
         val knee = threshold / 100f
         val value = impact(raw)
-        // Continuous soft knee: weak attacks have a small visible response instead
+        // Continuous soft knee: weak attacks have a small motion response instead
         // of a dead zone. The upper segment reserves most travel for heavy attacks.
         val response = when {
             knee == 0f -> value
@@ -29,17 +29,18 @@ data class LightTuning(
         return response.coerceIn(0f, 1f).pow(curve / 100f)
     }
     fun summary() = "灵敏度=$sensitivity%, 增益=$gain%, 重拍分界=$threshold%, " +
-        "唱片最大扩散=$extent%, 回落=${release}ms, 中频=$mid%, 高频=$high%, 间隔=${interval}ms, 响应曲线=$curve%"
+        "鼓点加速=$motionBoost%, 回落=${release}ms, 中频=$mid%, 高频=$high%, 间隔=${interval}ms, 响应曲线=$curve%"
     fun save(prefs: SharedPreferences) {
         prefs.edit().putInt("light_sensitivity", sensitivity).putInt("light_gain", gain)
             .putInt("light_threshold", threshold).putInt("light_release", release)
             .putInt("light_mid", mid).putInt("light_high", high)
-            .putInt("light_interval", interval).putInt("light_extent", extent)
+            .putInt("light_interval", interval).putInt("light_motion_boost", motionBoost)
+            .remove("light_extent")
             .putInt("light_curve", curve).putInt("light_profile_version", 2).apply()
     }
     companion object {
         fun load(prefs: SharedPreferences): LightTuning {
-            // Adopt the user-approved record-halo preset once on upgrade, then
+            // Adopt the user-approved audio preset once on upgrade, then
             // retain any subsequent adjustments made through the optional panel.
             val defaults = LightTuning()
             if (prefs.getInt("light_profile_version", 0) != 2)
@@ -52,7 +53,7 @@ data class LightTuning(
                 mid = prefs.getInt("light_mid", defaults.mid).coerceIn(0, 100),
                 high = prefs.getInt("light_high", defaults.high).coerceIn(0, 100),
                 interval = prefs.getInt("light_interval", defaults.interval).coerceIn(60, 300),
-                extent = prefs.getInt("light_extent", defaults.extent).coerceIn(110, 200),
+                motionBoost = prefs.getInt("light_motion_boost", defaults.motionBoost).coerceIn(0, 600),
                 curve = prefs.getInt("light_curve", defaults.curve).coerceIn(50, 250),
             )
         }

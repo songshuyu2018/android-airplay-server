@@ -194,12 +194,12 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         val controlGap = (if (compact) 16.dp else 26.dp) * controlScale
         val titleSize = minOf(if (square) 28f else if (compact) 27f else 40f,
             detailsWidth.value * .12f).coerceAtLeast(18f).sp
-        PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue })
+        PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue },
+            beat = { lightBeat.floatValue }, tuning = lightTuning)
         Row(Modifier.fillMaxSize().padding(horizontal = edge).padding(top = topGap, bottom = if (compact) 18.dp else 40.dp), verticalAlignment = Alignment.CenterVertically) {
             BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
                 val discSize = minOf(maxWidth, maxHeight)
-                RecordSpectrum(displayCover, colors, { angle.floatValue }, { spectrum.value },
-                    { lightBeat.floatValue }, lightTuning, playing, lifecycle, Modifier.size(discSize))
+                RecordSpectrum(displayCover, colors, { angle.floatValue }, { spectrum.value }, Modifier.size(discSize))
             }
             Spacer(Modifier.width(columnGap))
             Column(Modifier.width(detailsWidth).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.Center) {
@@ -302,7 +302,7 @@ private class LightDrift {
         // Independent smooth 3-second breathing cycle; it freezes with playback.
         zoomPhase = (zoomPhase + seconds * FULL_TURN / ZOOM_PERIOD_SECONDS) % FULL_TURN
         elapsed += seconds
-        if (elapsed >= duration) {
+        while (elapsed >= duration) {
             elapsed -= duration
             from = to
             to = nextKey(from)
@@ -321,18 +321,28 @@ private class LightDrift {
 
 @Composable
 private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Lifecycle?,
-    energy: () -> Float) {
+    energy: () -> Float, beat: () -> Float, tuning: LightTuning) {
+    val latestTuning by rememberUpdatedState(tuning)
+    val latestBeat by rememberUpdatedState(beat)
     val lights = remember { Array(3) { LightDrift() } }
     val frame = remember { mutableLongStateOf(0L) }
     LaunchedEffect(playing, lifecycle) {
         if (playing) lifecycle?.repeatOnLifecycle(Lifecycle.State.STARTED) {
             var previous = 0L
+            var speed = 1f
             while (isActive) withFrameNanos { now ->
                 if (previous != 0L) {
                     // Lifecycle/pause cancels this clock. Bound any delayed frame too,
                     // so resuming or a busy device never jumps the light across the screen.
                     val seconds = ((now - previous) / 1e9f).coerceIn(0f, .1f)
-                    for (light in lights) light.advance(seconds)
+                    val response = latestTuning.response(latestBeat())
+                    val targetSpeed = 1f + response * latestTuning.motionBoost / 100f
+                    val timeConstant = if (targetSpeed > speed) .05f else latestTuning.release / 1000f
+                    speed += (targetSpeed - speed) * (1f - exp(-seconds / timeConstant))
+                    // Advance the SAME continuous path; never choose a new position
+                    // on a hit. Cap delayed-frame travel to avoid visible jumps.
+                    val travel = (seconds * speed).coerceIn(0f, .20f)
+                    for (light in lights) light.advance(travel)
                     frame.longValue++
                 }
                 previous = now
@@ -365,8 +375,8 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
         val leftRestGradient = Brush.radialGradient(
             listOf(leftRestColor.copy(alpha = .95f), leftRestColor.copy(alpha = 0f)),
             center = Offset.Zero, radius = radii[0])
-        // Preserve the existing ambient gradients and random drift. Beat waves
-        // are drawn separately around the record, not over the entire background.
+        // Preserve the ambient gradients and bounded paths. Audio modulates only
+        // their clock speed, never the targets, shape, radius or palette.
         val drawOrder = intArrayOf(1, 2, 0)
         onDrawBehind {
             // Only this draw node observes the clock; layout and the record stay
@@ -386,8 +396,8 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
                     scale(sx, sy, pivot = Offset.Zero)
                 }) {
                     if (index == 0) {
-                        // Retain the pale left ambient wash while its random
-                        // position/zoom continues independently of drum attacks.
+                        // Same pale wash and micro-motion; hits gently accelerate
+                        // the continuous drift instead of flashing a new overlay.
                         drawCircle(leftRestGradient, radii[0], center = Offset.Zero,
                             alpha = light.opacity * breath)
                     } else {
@@ -402,13 +412,8 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
 
 @Composable
 private fun RecordSpectrum(cover: ImageBitmap?, colors: PlayerColors, angle: () -> Float,
-    spectrum: () -> FloatArray, beat: () -> Float, tuning: LightTuning, playing: Boolean,
-    lifecycle: Lifecycle?, modifier: Modifier) {
+    spectrum: () -> FloatArray, modifier: Modifier) {
     Box(modifier, contentAlignment = Alignment.Center) {
-        // Shadow below the halo, so it cannot darken the expanding colored ring.
-        Box(Modifier.fillMaxSize(.77f).shadow(24.dp, CircleShape)
-            .background(Color(0xFF17151D), CircleShape))
-        RecordBeatHalo(colors, beat, tuning, playing, lifecycle, Modifier.fillMaxSize())
         // Cache all trigonometry and shaders. Reading the bands only in the draw
         // phase invalidates this spectrum layer, not the rotating record.
         Box(Modifier.fillMaxSize().graphicsLayer().drawWithCache {
@@ -432,7 +437,7 @@ private fun RecordSpectrum(cover: ImageBitmap?, colors: PlayerColors, angle: () 
         })
         // Keep the shadow stationary and rasterize the disc once into its own
         // layer. Each vsync updates only rotationZ on that cached layer.
-        Box(Modifier.fillMaxSize(.77f)) {
+        Box(Modifier.fillMaxSize(.77f).shadow(24.dp, CircleShape)) {
             Box(Modifier.fillMaxSize().graphicsLayer {
                 rotationZ = angle()
                 compositingStrategy = CompositingStrategy.Offscreen
@@ -527,115 +532,4 @@ private fun PlayerProgress(viewModel: MainViewModel, accent: Color) {
         Text(playerTime(position), color = accent, fontSize = 11.sp)
         Text(if (duration > 0) playerTime(duration) else "--:--", color = accent, fontSize = 11.sp)
     }
-}
-
-private class RecordPulse {
-    var age = Float.POSITIVE_INFINITY
-    var strength = 0f
-}
-
-/** Soft, irregular clouds extend from the vinyl edge; no annular stroke. */
-@Composable
-private fun RecordBeatHalo(colors: PlayerColors, beat: () -> Float, tuning: LightTuning,
-    playing: Boolean, lifecycle: Lifecycle?, modifier: Modifier) {
-    val pulses = remember { Array(6) { RecordPulse() } }
-    val flowTime = remember { doubleArrayOf(0.0) }
-    val frame = remember { mutableLongStateOf(0L) }
-    val latestTuning by rememberUpdatedState(tuning)
-    LaunchedEffect(playing, lifecycle) {
-        for (pulse in pulses) pulse.age = Float.POSITIVE_INFINITY
-        frame.longValue++
-        if (playing) lifecycle?.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            var previousTime = 0L
-            var previousBeat = 0f
-            var lastLaunch = 0L
-            var next = 0
-            var active = -1
-            try {
-                while (isActive) withFrameNanos { now ->
-                    val dt = if (previousTime == 0L) 0f else
-                        ((now - previousTime) / 1e9f).coerceIn(0f, .1f)
-                    previousTime = now
-                    for (pulse in pulses) pulse.age += dt
-                    flowTime[0] += dt
-                    val raw = beat()
-                    val strength = latestTuning.expansion(raw)
-                    val canLaunch = lastLaunch == 0L ||
-                        now - lastLaunch >= latestTuning.interval * 1000000L
-                    if (raw >= .015f && raw > previousBeat + .008f && canLaunch) {
-                        pulses[next].age = 0f
-                        pulses[next].strength = strength
-                        active = next
-                        next = (next + 1) % pulses.size
-                        lastLaunch = now
-                    } else if (active >= 0 && pulses[active].age < .035f) {
-                        // Native attack peaks can arrive over several frames. Update
-                        // intensity without restarting the outward motion.
-                        pulses[active].strength = maxOf(pulses[active].strength, strength)
-                    }
-                    previousBeat = raw
-                    frame.longValue++
-                }
-            } finally {
-                for (pulse in pulses) pulse.age = Float.POSITIVE_INFINITY
-                frame.longValue++
-            }
-        }
-    }
-    Box(modifier.drawWithCache {
-        val center = Offset(size.width / 2, size.height / 2)
-        // Vinyl itself occupies 77% of RecordSpectrum's square, not the cover art.
-        val discRadius = size.minDimension * .77f / 2
-        val maximumScale = tuning.extent / 100f
-        // Filled, feathered clouds overlap around the edge. The vinyl covers their
-        // inner half; there is no hollow gradient or bright circular contour.
-        val cloud = Brush.radialGradient(
-            0f to colors.glow.copy(alpha = .90f),
-            .35f to colors.glow.copy(alpha = .70f),
-            .65f to colors.secondaryGlow.copy(alpha = .35f),
-            .85f to colors.glow.copy(alpha = .10f),
-            1f to Color.Transparent,
-            center = Offset.Zero, radius = 1f
-        )
-        val count = 64
-        val angles = DoubleArray(count) { it * 2.0 * PI / count }
-        val directions = Array(count) { Offset(cos(angles[it]).toFloat(), sin(angles[it]).toFloat()) }
-        val duration = tuning.release / 1000f
-        onDrawBehind {
-            frame.longValue
-            var extension = 0f
-            var intensity = 0f
-            for (pulse in pulses) {
-                if (pulse.age >= duration || pulse.strength <= .001f) continue
-                val progress = (pulse.age / duration).coerceIn(0f, 1f)
-                val travel = 1f - (1f - progress) * (1f - progress)
-                // Connected clouds stretch outward, then settle; no detached rings.
-                extension = maxOf(extension, pulse.strength * travel * (1f - progress * .15f))
-                intensity = maxOf(intensity, pulse.strength * (1f - progress).pow(1.2f))
-            }
-            val reach = 1.10f + (maximumScale - 1.10f) * extension
-            val time = flowTime[0]
-            for (i in 0 until count) {
-                val angle = angles[i]
-                // Low angular frequencies and continuous time make broad rounded
-                // folds rather than sharp flame tips, spikes or frame-random jitter.
-                val softness = (.5 + .23 * sin(3 * angle + time * .70) +
-                    .16 * sin(5 * angle - time * .43) +
-                    .10 * sin(8 * angle + time * .29)).toFloat().coerceIn(0f, 1f)
-                val outer = discRadius * (1.02f + (reach - 1.02f) * (.5f + softness * .5f))
-                val inner = discRadius * .88f
-                val radialSize = (outer - inner) / 2
-                val tangentSize = radialSize * (.88f + softness * .10f)
-                val location = center + directions[i] * ((inner + outer) / 2)
-                val alpha = ((.32f + intensity * .48f) * (.65f + softness * .35f)).coerceIn(0f, 1f)
-                withTransform({
-                    translate(location.x, location.y)
-                    rotate((angle * 180 / PI).toFloat(), pivot = Offset.Zero)
-                    scale(radialSize, tangentSize, pivot = Offset.Zero)
-                }) {
-                    drawCircle(cloud, 1f, Offset.Zero, alpha = alpha)
-                }
-            }
-        }
-    })
 }
