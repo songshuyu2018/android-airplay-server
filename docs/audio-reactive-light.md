@@ -196,3 +196,25 @@ The supplied FLAC was replayed through the unchanged native detector with the ne
 preset. A 60Hz control/geometry simulation checked 110-140% bounds, bounded pulse
 overlap and cleanup after the end. This is offline verification; Android layout,
 perceived halo strength and real output timing still require device testing.
+
+## Soft irregular glow (replaces the annular wave renderer)
+
+The user clarified that the visual should be a soft, flame/cloud-like aura, not
+expanding circular rings. The record effect now uses 64 overlapping filled radial
+gradient clouds rooted under the vinyl edge. Broad, nearly round footprints blend
+into one continuous haze; there is no hollow gradient, circular stroke, sharp flame
+tip or narrow radial ray. The vinyl covers the inner clouds.
+
+Three low angular-frequency sinusoids (3/5/8) evolve continuously in time to produce
+rounded, irregular outer contours. Beat pulses drive the shared field's outward
+reach and intensity, then settle softly; they no longer draw separate rings.
+The 110% resting / 140% approved maximum diameter and user-confirmed preset remain.
+Each cloud's tangent radius is <= its radial radius, so its complete footprint is
+bounded by the local outer radius. Offline angular/time sampling checked the bounds
+for both the approved 140% and the optional 110-200% calibration range.
+
+Gradient brush, directions, angles and pulse slots are cached/reused. Only the draw
+node observes the animation clock; record rotation, background micro-motion, settings
+visibility and lifecycle cleanup remain independent. A local raster approximation
+was inspected for continuous feathered edges and absence of narrow rays; actual
+Android appearance/performance still needs the normal device check.

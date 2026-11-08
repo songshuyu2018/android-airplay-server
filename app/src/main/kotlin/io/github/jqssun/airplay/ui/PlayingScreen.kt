@@ -534,11 +534,12 @@ private class RecordPulse {
     var strength = 0f
 }
 
-/** An outward, fading wave around the actual vinyl, independent of rotation. */
+/** Soft, irregular clouds extend from the vinyl edge; no annular stroke. */
 @Composable
 private fun RecordBeatHalo(colors: PlayerColors, beat: () -> Float, tuning: LightTuning,
     playing: Boolean, lifecycle: Lifecycle?, modifier: Modifier) {
     val pulses = remember { Array(6) { RecordPulse() } }
+    val flowTime = remember { doubleArrayOf(0.0) }
     val frame = remember { mutableLongStateOf(0L) }
     val latestTuning by rememberUpdatedState(tuning)
     LaunchedEffect(playing, lifecycle) {
@@ -556,6 +557,7 @@ private fun RecordBeatHalo(colors: PlayerColors, beat: () -> Float, tuning: Ligh
                         ((now - previousTime) / 1e9f).coerceIn(0f, .1f)
                     previousTime = now
                     for (pulse in pulses) pulse.age += dt
+                    flowTime[0] += dt
                     val raw = beat()
                     val strength = latestTuning.expansion(raw)
                     val canLaunch = lastLaunch == 0L ||
@@ -584,31 +586,54 @@ private fun RecordBeatHalo(colors: PlayerColors, beat: () -> Float, tuning: Ligh
         val center = Offset(size.width / 2, size.height / 2)
         // Vinyl itself occupies 77% of RecordSpectrum's square, not the cover art.
         val discRadius = size.minDimension * .77f / 2
-        val baseRadius = discRadius * 1.10f
         val maximumScale = tuning.extent / 100f
-        val ring = Brush.radialGradient(
-            0f to Color.Transparent,
-            .78f to Color.Transparent,
-            .88f to colors.secondaryGlow.copy(alpha = .25f),
-            .94f to colors.glow.copy(alpha = .95f),
-            .98f to colors.glow.copy(alpha = .4f),
+        // Filled, feathered clouds overlap around the edge. The vinyl covers their
+        // inner half; there is no hollow gradient or bright circular contour.
+        val cloud = Brush.radialGradient(
+            0f to colors.glow.copy(alpha = .90f),
+            .35f to colors.glow.copy(alpha = .70f),
+            .65f to colors.secondaryGlow.copy(alpha = .35f),
+            .85f to colors.glow.copy(alpha = .10f),
             1f to Color.Transparent,
             center = Offset.Zero, radius = 1f
         )
+        val count = 64
+        val angles = DoubleArray(count) { it * 2.0 * PI / count }
+        val directions = Array(count) { Offset(cos(angles[it]).toFloat(), sin(angles[it]).toFloat()) }
         val duration = tuning.release / 1000f
         onDrawBehind {
             frame.longValue
-            withTransform({ translate(center.x, center.y); scale(baseRadius, baseRadius, pivot = Offset.Zero) }) {
-                drawCircle(ring, 1f, Offset.Zero, alpha = .45f)
-            }
+            var extension = 0f
+            var intensity = 0f
             for (pulse in pulses) {
                 if (pulse.age >= duration || pulse.strength <= .001f) continue
                 val progress = (pulse.age / duration).coerceIn(0f, 1f)
                 val travel = 1f - (1f - progress) * (1f - progress)
-                val radius = discRadius * (1.10f + (maximumScale - 1.10f) * pulse.strength * travel)
-                val alpha = (pulse.strength * (1f - progress).pow(1.2f)).coerceIn(0f, 1f)
-                withTransform({ translate(center.x, center.y); scale(radius, radius, pivot = Offset.Zero) }) {
-                    drawCircle(ring, 1f, Offset.Zero, alpha = alpha)
+                // Connected clouds stretch outward, then settle; no detached rings.
+                extension = maxOf(extension, pulse.strength * travel * (1f - progress * .15f))
+                intensity = maxOf(intensity, pulse.strength * (1f - progress).pow(1.2f))
+            }
+            val reach = 1.10f + (maximumScale - 1.10f) * extension
+            val time = flowTime[0]
+            for (i in 0 until count) {
+                val angle = angles[i]
+                // Low angular frequencies and continuous time make broad rounded
+                // folds rather than sharp flame tips, spikes or frame-random jitter.
+                val softness = (.5 + .23 * sin(3 * angle + time * .70) +
+                    .16 * sin(5 * angle - time * .43) +
+                    .10 * sin(8 * angle + time * .29)).toFloat().coerceIn(0f, 1f)
+                val outer = discRadius * (1.02f + (reach - 1.02f) * (.5f + softness * .5f))
+                val inner = discRadius * .88f
+                val radialSize = (outer - inner) / 2
+                val tangentSize = radialSize * (.88f + softness * .10f)
+                val location = center + directions[i] * ((inner + outer) / 2)
+                val alpha = ((.32f + intensity * .48f) * (.65f + softness * .35f)).coerceIn(0f, 1f)
+                withTransform({
+                    translate(location.x, location.y)
+                    rotate((angle * 180 / PI).toFloat(), pivot = Offset.Zero)
+                    scale(radialSize, tangentSize, pivot = Offset.Zero)
+                }) {
+                    drawCircle(cloud, 1f, Offset.Zero, alpha = alpha)
                 }
             }
         }
