@@ -50,7 +50,32 @@ jobs:
           export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
           chmod +x ./gradlew
-          ./gradlew assembleRelease --stacktrace
+          set -o pipefail
+          for attempt in 1 2 3; do
+            build_log="$RUNNER_TEMP/gradle-build-$attempt.log"
+            if ./gradlew assembleRelease --stacktrace 2>&1 | tee "$build_log"; then
+              exit 0
+            fi
+            if grep -Eq '(^|[[:space:]])e: |[.](java|cpp|cc|c|h):[0-9]+(:[0-9]+)?: (fatal )?error:' "$build_log"; then
+              exit 1
+            fi
+            if ! grep -Eiq 'Could not (GET|HEAD)|Read timed out|Connect(ion)? timed out|SocketTimeoutException|failed: timeout|HTTP response code: (429|50[0-9])|Received status code (429|50[0-9])|Temporary failure in name resolution|UnknownHostException|Connection reset|Remote host terminated the handshake' "$build_log"; then
+              exit 1
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "Transient dependency download failure; retrying build (attempt $((attempt + 1))/3)"
+            sleep "$((attempt * 10))"
+          done
+
+      - name: Upload build diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-logs
+          path: ${{ runner.temp }}/gradle-build-*.log
+          if-no-files-found: ignore
 
       - name: Upload unsigned APK
         uses: actions/upload-artifact@v4
