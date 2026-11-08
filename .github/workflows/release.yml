@@ -66,6 +66,10 @@ jobs:
               exit 1
             fi
             echo "Transient dependency download failure; retrying build (attempt $((attempt + 1))/3)"
+            # Only this disposable CI checkout is reset. The patch task adds files
+            # that must be removed before it can run a second time.
+            git -C app/src/main/cpp/third_party/UxPlay reset --hard HEAD
+            git -C app/src/main/cpp/third_party/UxPlay clean -fd
             sleep "$((attempt * 10))"
           done
 
