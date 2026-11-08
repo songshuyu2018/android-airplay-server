@@ -55,3 +55,13 @@ freezing, the continuous gradient surface and the square control layout remain.
 Each light additionally breathes in scale by ±12% over a smooth three-second
 sine cycle, independently of its random movement segment. Phases differ between
 lights; pause/background freezes both drift and zoom without resetting either.
+
+Bass-onset feedback reuses the first eight existing FFT bands at 20Hz. Positive
+bass changes above a slowly tracked baseline trigger a short pulse; sustained
+loudness and silence do not continuously trigger it. The envelope decays between
+onsets and is smoothed at frame rate with fast attack/soft release. It adds up
+to 15% expansion and 12 percentage points of colored glow strength on top of
+existing random drift and independent three-second breathing. No extra JNI/audio
+thread work is introduced. This is onset feedback, not a BPM/beat-grid estimator.
+Device checks: percussive vs sustained music, quiet passages, pause/resume, readable
+text, and smooth record rotation; sensitivity needs listening-device verification.

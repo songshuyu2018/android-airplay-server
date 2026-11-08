@@ -92,6 +92,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     val angle = remember { mutableFloatStateOf(0f) }
     val spectrum = remember { mutableStateOf(FloatArray(48)) }
     val lightEnergy = remember { mutableFloatStateOf(0f) }
+    val lightBeat = remember { mutableFloatStateOf(0f) }
     val displayCover by produceState<ImageBitmap?>(null, track.coverArt) {
         value = withContext(Dispatchers.Default) {
             track.coverArt?.let { source ->
@@ -133,6 +134,8 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     // receiver teardown cannot invalidate its handle during a background FFT call.
     LaunchedEffect(viewModel, lifecycle) {
         lifecycle?.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            var previousBass = 0f
+            var bassBaseline = 0f
             try {
                 while (isActive) {
                     val values = viewModel.audioSpectrum(latestPlaying)
@@ -148,6 +151,27 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                         val targetEnergy = sqrt(sum / count).coerceIn(0f, 1f)
                         lightEnergy.floatValue += (targetEnergy - lightEnergy.floatValue) * .06f
                     }
+                    // Bass onsets, rather than loudness alone, produce a brief kick.
+                    var onset = 0f
+                    if (latestPlaying && values.isNotEmpty()) {
+                        val bassCount = minOf(8, values.size)
+                        var bassPower = 0f
+                        for (i in 0 until bassCount) {
+                            val band = values[i]
+                            if (band.isFinite()) bassPower += band * band
+                        }
+                        val bass = sqrt(bassPower / bassCount).coerceIn(0f, 1f)
+                        val rise = bass - previousBass
+                        if (rise > .008f && bass > bassBaseline * 1.15f + .005f) {
+                            onset = (rise / maxOf(.025f, bassBaseline * .65f)).coerceIn(0f, 1f)
+                        }
+                        bassBaseline += (bass - bassBaseline) * .08f
+                        previousBass = bass
+                    } else {
+                        previousBass = 0f
+                        bassBaseline = 0f
+                    }
+                    lightBeat.floatValue = maxOf(onset, lightBeat.floatValue * .78f)
                     val old = spectrum.value
                     spectrum.value = FloatArray(48) { i ->
                         val target = if (latestPlaying) values.getOrElse(i) { 0f } else 0f
@@ -173,7 +197,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         val controlGap = (if (compact) 16.dp else 26.dp) * controlScale
         val titleSize = minOf(if (square) 28f else if (compact) 27f else 40f,
             detailsWidth.value * .12f).coerceAtLeast(18f).sp
-        PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue })
+        PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue }, beat = { lightBeat.floatValue })
         Row(Modifier.fillMaxSize().padding(horizontal = edge).padding(top = topGap, bottom = if (compact) 18.dp else 40.dp), verticalAlignment = Alignment.CenterVertically) {
             BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
                 val discSize = minOf(maxWidth, maxHeight)
@@ -289,9 +313,11 @@ private class LightDrift {
 }
 
 @Composable
-private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Lifecycle?, energy: () -> Float) {
+private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Lifecycle?,
+    energy: () -> Float, beat: () -> Float) {
     val lights = remember { Array(3) { LightDrift() } }
     val frame = remember { mutableLongStateOf(0L) }
+    val beatPulse = remember { mutableFloatStateOf(0f) }
     LaunchedEffect(playing, lifecycle) {
         if (playing) lifecycle?.repeatOnLifecycle(Lifecycle.State.STARTED) {
             var previous = 0L
@@ -301,6 +327,10 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
                     // so resuming or a busy device never jumps the light across the screen.
                     val seconds = ((now - previous) / 1e9f).coerceIn(0f, .1f)
                     for (light in lights) light.advance(seconds)
+                    val targetBeat = beat()
+                    val response = if (targetBeat > beatPulse.floatValue) .025f else .14f
+                    val follow = 1f - exp(-seconds / response)
+                    beatPulse.floatValue += (targetBeat - beatPulse.floatValue) * follow
                     frame.longValue++
                 }
                 previous = now
@@ -331,11 +361,12 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
             // independent. Shader parameters are cached above, not rebuilt per frame.
             frame.longValue
             drawRect(base)
-            val breath = .94f + energy() * .06f
+            val pulse = beatPulse.floatValue.coerceIn(0f, 1f)
+            val breath = .82f + energy() * .06f + pulse * .12f
             for (index in lights.indices) {
                 val light = lights[index]
                 val center = centers[index]
-                val zoom = light.zoom
+                val zoom = light.zoom * (1f + pulse * .15f)
                 withTransform({
                     translate(center.x + light.x * width, center.y + light.y * height)
                     scale(light.scaleX * zoom, light.scaleY * zoom, pivot = Offset.Zero)
