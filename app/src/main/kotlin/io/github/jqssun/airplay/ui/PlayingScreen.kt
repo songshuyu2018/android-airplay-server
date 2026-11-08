@@ -218,19 +218,40 @@ private data class LightKey(
     val x: Float, val y: Float, val scaleX: Float, val scaleY: Float, val opacity: Float
 )
 
-/** Ample travel, very slow transitions; no keyframe allocations on animation frames. */
+/** Bounded random travel with a minimum distance between successive targets. */
 private class LightDrift {
+    private companion object {
+        const val X_REACH = .18f
+        const val Y_REACH = .22f
+        const val MIN_DISTANCE_SQUARED = .20f * .20f
+    }
     private fun key() = LightKey(
-        Random.nextFloat() * .20f - .10f,
-        Random.nextFloat() * .28f - .14f,
+        Random.nextFloat() * (2f * X_REACH) - X_REACH,
+        Random.nextFloat() * (2f * Y_REACH) - Y_REACH,
         .88f + Random.nextFloat() * .24f,
         .88f + Random.nextFloat() * .24f,
         .9f + Random.nextFloat() * .1f
     )
+    private fun nextKey(previous: LightKey): LightKey {
+        repeat(24) {
+            val candidate = key()
+            val dx = candidate.x - previous.x
+            val dy = candidate.y - previous.y
+            // Normalized screen coordinates guarantee >=20% of the shorter
+            // screen edge in actual pixels, including non-square layouts.
+            if (dx * dx + dy * dy >= MIN_DISTANCE_SQUARED) return candidate
+        }
+        // A bounded fallback avoids an unlucky retry loop and still guarantees
+        // the minimum distance, even when the previous target is near center.
+        return key().copy(
+            x = if (previous.x >= 0f) -X_REACH else X_REACH,
+            y = if (previous.y >= 0f) -Y_REACH else Y_REACH
+        )
+    }
     private var from = key()
-    private var to = key()
+    private var to = nextKey(from)
     private var elapsed = 0f
-    private var duration = 10f + Random.nextFloat() * 7.5f
+    private var duration = 5f + Random.nextFloat() * 5f
     var x = from.x
         private set
     var y = from.y
@@ -247,8 +268,8 @@ private class LightDrift {
         if (elapsed >= duration) {
             elapsed -= duration
             from = to
-            to = key()
-            duration = 10f + Random.nextFloat() * 7.5f
+            to = nextKey(from)
+            duration = 5f + Random.nextFloat() * 5f
         }
         val t = (elapsed / duration).coerceIn(0f, 1f)
         // Zero velocity and acceleration at each boundary: no abrupt direction changes.

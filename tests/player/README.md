@@ -16,8 +16,8 @@ layer overlaps share that lower bound. Foreground contrast is checked against th
 conservative bound, replacing the former rectangular white veils. Gray covers stay
 neutral; the palette test still exercises 2000 mixed palettes and vivid-cover cases.
 
-The gradients travel up to 10% of width and 14% of height, with modest elliptical
-shape changes, but each random transition takes 10–17.5 seconds. Quintic easing
+The gradients travel up to 18% of width and 22% of height, with modest elliptical
+shape changes, but each random transition takes 5–10 seconds. Quintic easing
 keeps direction changes smooth. The existing PCM spectrum adds only a subtle
 brightness envelope. No extra audio sampling or live blur pass is added.
 
@@ -46,3 +46,8 @@ speed is retained.
 Near-identical extracted light colors use white as the secondary gradient stop.
 Single-hue and gray covers thus retain a gentle color-to-white wash; pure white
 stays white, and genuinely distinct extracted hues are retained.
+
+Every new random target is at least 20% of the shorter screen edge from its
+predecessor. Bounded rejection sampling has an opposite-corner fallback, so
+near-identical targets and unbounded retry loops cannot occur. Easing, pause
+freezing, the continuous gradient surface and the square control layout remain.
