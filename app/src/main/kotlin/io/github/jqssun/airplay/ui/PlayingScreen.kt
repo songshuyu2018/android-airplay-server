@@ -224,6 +224,8 @@ private class LightDrift {
         const val X_REACH = .18f
         const val Y_REACH = .22f
         const val MIN_DISTANCE_SQUARED = .20f * .20f
+        const val FULL_TURN = 6.2831855f
+        const val ZOOM_PERIOD_SECONDS = 3f
     }
     private fun key() = LightKey(
         Random.nextFloat() * (2f * X_REACH) - X_REACH,
@@ -248,10 +250,12 @@ private class LightDrift {
             y = if (previous.y >= 0f) -Y_REACH else Y_REACH
         )
     }
+    private var zoomPhase = Random.nextFloat() * FULL_TURN
+    val zoom: Float get() = 1f + .12f * sin(zoomPhase)
     private var from = key()
     private var to = nextKey(from)
     private var elapsed = 0f
-    private var duration = 5f + Random.nextFloat() * 5f
+    private var duration = 2f + Random.nextFloat() * 3f
     var x = from.x
         private set
     var y = from.y
@@ -264,12 +268,14 @@ private class LightDrift {
         private set
 
     fun advance(seconds: Float) {
+        // Independent smooth 3-second breathing cycle; it freezes with playback.
+        zoomPhase = (zoomPhase + seconds * FULL_TURN / ZOOM_PERIOD_SECONDS) % FULL_TURN
         elapsed += seconds
         if (elapsed >= duration) {
             elapsed -= duration
             from = to
             to = nextKey(from)
-            duration = 5f + Random.nextFloat() * 5f
+            duration = 2f + Random.nextFloat() * 3f
         }
         val t = (elapsed / duration).coerceIn(0f, 1f)
         // Zero velocity and acceleration at each boundary: no abrupt direction changes.
@@ -329,9 +335,10 @@ private fun PlayerBackdrop(colors: PlayerColors, playing: Boolean, lifecycle: Li
             for (index in lights.indices) {
                 val light = lights[index]
                 val center = centers[index]
+                val zoom = light.zoom
                 withTransform({
                     translate(center.x + light.x * width, center.y + light.y * height)
-                    scale(light.scaleX, light.scaleY, pivot = Offset.Zero)
+                    scale(light.scaleX * zoom, light.scaleY * zoom, pivot = Offset.Zero)
                 }) {
                     // The circular primitive fades completely before its boundary.
                     // Overlap and gentle elliptical deformation make an organic wash.
