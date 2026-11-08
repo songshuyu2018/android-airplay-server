@@ -92,6 +92,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         if (action == io.github.jqssun.airplay.audio.AudioPresentationPolicy.Action.NONE) return
         val open = action == io.github.jqssun.airplay.audio.AudioPresentationPolicy.Action.OPEN
         if (open && !shouldLaunchOnConnect()) return
+        if (!open && !prefs[Prefs.AUDIO_IDLE_RETURN_HOME]) return
         log("Audio page ${if (open) "open" else "close"}: session ${audioPresentationPolicy.sessionId()}")
         val request = AudioPageRequest(SystemClock.elapsedRealtimeNanos(), open)
         _audioPageRequest.value = request

@@ -69,3 +69,8 @@ mkdir -p /tmp/presentation-tests
 javac -d /tmp/presentation-tests app/src/main/java/io/github/jqssun/airplay/audio/AudioPresentationPolicy.java tests/presentation/AudioPresentationPolicyTest.java
 java -cp /tmp/presentation-tests AudioPresentationPolicyTest
 ```
+
+Developer settings includes audio_idle_return_home (default true). Disabling it
+suppresses idle CLOSE navigation at dispatch time; playback tracking, automatic
+opening and the original 30-second deadline remain independent. Disabled idle
+expiry leaves Playing visible. Manual back navigation is unaffected.

@@ -221,4 +221,6 @@
     <string name="background_launch_setting_desc">Huawei: enable Background pop-ups (后台弹窗) for this app. This switch cannot be queried using Android runtime permissions.</string>
     <string name="background_launch_settings">Open settings</string>
     <string name="background_launch_continue">Continue</string>
+    <string name="setting_audio_idle_return_home">停播后自动返回桌面</string>
+    <string name="setting_audio_idle_return_home_desc">音乐停止播放 30 秒后返回桌面；关闭后保留播放页面。</string>
 </resources>

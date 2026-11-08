@@ -65,6 +65,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
     val forceSwAac by viewModel.pref(Prefs.FORCE_SW_AAC).collectAsState()
     val syncClientVolume by viewModel.pref(Prefs.SYNC_CLIENT_VOLUME).collectAsState()
     val debugEnabled by viewModel.pref(Prefs.DEBUG_ENABLED).collectAsState()
+    val audioIdleReturnHome by viewModel.pref(Prefs.AUDIO_IDLE_RETURN_HOME).collectAsState()
     val developerOptions by viewModel.pref(Prefs.DEVELOPER_OPTIONS).collectAsState()
     val keyAllowFrameDrop by viewModel.pref(Prefs.KEY_ALLOW_FRAME_DROP).collectAsState()
     val realtimeDecoderPriority by viewModel.pref(Prefs.KEY_PRIORITY).collectAsState()
@@ -265,6 +266,13 @@ fun SettingsScreen(viewModel: MainViewModel) {
         )
 
         if (developerOptions) {
+            SettingSwitch(
+                title = stringResource(R.string.setting_audio_idle_return_home),
+                description = stringResource(R.string.setting_audio_idle_return_home_desc),
+                checked = audioIdleReturnHome,
+                onCheckedChange = { viewModel.set(Prefs.AUDIO_IDLE_RETURN_HOME, it) }
+            )
+
             SettingSwitch(
                 title = stringResource(R.string.setting_auto_start),
                 description = stringResource(R.string.setting_auto_start_desc),
