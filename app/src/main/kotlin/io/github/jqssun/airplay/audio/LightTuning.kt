@@ -5,7 +5,7 @@ import android.content.SharedPreferences
 /** Percentages stay integral so values can be read back and reproduced exactly. */
 data class LightTuning(
     val sensitivity: Int = 150,
-    val gain: Int = 250,
+    val gain: Int = 100,
     val threshold: Int = 25,
     val release: Int = 240,
     val mid: Int = 60,
@@ -30,7 +30,7 @@ data class LightTuning(
     companion object {
         fun load(prefs: SharedPreferences) = LightTuning(
             sensitivity = prefs.getInt("light_sensitivity", 150).coerceIn(50, 400),
-            gain = prefs.getInt("light_gain", 250).coerceIn(50, 800),
+            gain = prefs.getInt("light_gain", 100).coerceIn(50, 800),
             threshold = prefs.getInt("light_threshold", 25).coerceIn(0, 90),
             release = prefs.getInt("light_release", 240).coerceIn(80, 600),
             mid = prefs.getInt("light_mid", 60).coerceIn(0, 100),

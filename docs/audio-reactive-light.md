@@ -39,8 +39,8 @@ smoothing remains separate and uses elapsed time.
 
 The callback does no FFT, allocation or blocking lock. Analysis uses a coherent
 atomic snapshot; a concurrent write causes the snapshot to be discarded. Work per
-read is capped at 12 hops. Longer UI stalls reset the detector at current audio,
-rather than replaying stale beats. Disable / re-enable and sample-rate changes
+read is capped at 24 hops. Backlogs analyse a recent tail; gaps over half a second
+reset history before warming through that tail, rather than replaying old audio. Disable / re-enable and sample-rate changes
 reset the detector. Short end-of-stream gaps retain a soft envelope release.
 
 This removes analysis and animation delay; it does not measure downstream speaker
@@ -88,7 +88,7 @@ Copy exports all eight exact values for later fixing in code.
 | Slider | Range | Initial value |
 | --- | --- | --- |
 | Detection sensitivity | 50-400% | 150% |
-| Visual gain | 50-800% | 250% |
+| Visual gain | 50-800% | 100% |
 | Expansion knee | 0-90% | 25% |
 | Maximum expansion extent | 0-200% | 100% |
 | Release time constant | 80-600ms | 240ms |
@@ -109,3 +109,34 @@ a modest response instead of multiplying every sub-maximal measure towards zero.
 Native sensitivity still acts before rejection, so it can recover weak attacks that
 post-detection visual gain cannot. Changing it preserves analysis history; resets
 preserve tuning. PCM tests check this native sensitivity behavior and reset handling.
+
+## Large playout blocks and usable strength range
+
+A regression fixture exposed a pipeline failure independent of the sensitivity
+slider: at 44.1kHz, a 4096-frame callback exceeds the old 12-hop processing limit.
+Every read discarded all but one FFT window, reset the detector, and spent that
+single window priming. Repeating this yielded zero attacks indefinitely. The
+same mixed PCM produced 10/10 visible attacks with 256-frame blocks and 0/10 with
+4096-frame blocks before the fix.
+
+The 24-hop budget covers normal 4096/6144-frame blocks. Greater backlogs process
+a bounded recent tail of overlapping windows; the detector is not re-primed on
+every modest backlog. After a genuinely long gap it is reset and warmed through
+the tail, not just one window. The PCM copy still fits the 8192-frame history and
+audio callbacks do no analysis. `mixed_onset_test.cpp` exercises 44.1/48kHz with
+256/4096/6144/8192-frame blocks, continuous harmonics/noise and embedded percussion.
+Assertions allow input-block delivery latency, rather than assuming 60Hz PCM arrival.
+
+Accepted onset quality is additionally calibrated per frequency band against an
+8-second decaying reference of accepted attack peaks. Whole-track loudness and
+per-frame zero samples do not establish the range. A reference-strength attack
+maps near 80%, reserving headroom for an exceptional hit; small/medium attacks
+retain their ordering. A minimum reference of 0.18 and quality floor of 0.01 stop
+very small fluctuations from being normalized into heavy beats. Calibration happens
+before the user-selected frequency weights, so those caps still work. The existing
+meter now displays this calibrated onset envelope; visual gain/knee/extent remain
+separate. New/reset visual gain defaults to 100%; saved tuning is preserved.
+
+Range tests verify ordering, comparable output after 4x source-quality scaling,
+and no promotion of sub-floor fluctuations. This improves the usable range; it is
+not a drum-source separator and still needs listening tests on real tracks/devices.

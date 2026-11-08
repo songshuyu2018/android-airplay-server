@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include "audio_light_config.h"
+#include "audio_attack_range.h"
 
 // Original positive spectral flux / adaptive threshold implementation.
 // Design references (no source copied): aubio specflux and LedFx's separate
@@ -40,6 +41,8 @@ public:
         level = std::max(rms, level * std::exp(-dt / 2.f));
         const float bassShare = power[0] / std::max(1e-8f, power[0] + power[1] + power[2]);
         float strength = 0;
+        float winningQuality = 0, winningWeight = 0;
+        int winningGroup = 0;
         for (int g = 0; g < 3; ++g) {
             flux[g] /= std::sqrt(float(std::max(1, counts[g])));
             const float threshold = .003f + mean[g] * 2.f + 1.2f * std::sqrt(variance[g]);
@@ -55,22 +58,31 @@ public:
             // four suppressors: mixed/mastered music rarely maximizes them together.
             // Frequency weights and detection sensitivity are independently tunable.
             const float weight = g == 0 ? std::clamp(bassShare / .45f, 0.f, 1.f) : g == 1 ? mConfig.midWeight : mConfig.highWeight;
-            strength = std::max(strength, novelty * (.25f + .75f * std::sqrt(rise * contrast)) * (.35f + .65f * loudness) * weight);
+            const float quality = novelty * (.25f + .75f * std::sqrt(rise * contrast)) * (.35f + .65f * loudness);
+            if (quality * weight > strength) {
+                strength = quality * weight;
+                winningQuality = quality; winningWeight = weight; winningGroup = g;
+            }
             previousEnergy[g] = energy;
             energyMean[g] += (1.f - std::exp(-dt / .35f)) * (energy - energyMean[g]);
         }
         // A small consonant/hat immediately before a kick must not lock it out.
-        const bool upgrade = hasEvent && eventStrength < .4f && strength > .6f &&
+        const bool upgrade = hasEvent && mEventRaw < .4f && strength > .6f &&
             frame - eventFrame >= uint64_t(rate * .035f);
         if (primed && rms > .0018f && strength > .025f / mConfig.sensitivity &&
             (!hasEvent || frame - eventFrame >= uint64_t(rate * mConfig.intervalMs / 1000.f) || upgrade)) {
             eventFrame = frame;
-            eventStrength = strength;
+            mEventRaw = strength;
+            eventStrength = mRanges[winningGroup].accept(winningQuality, frame, rate) * winningWeight;
             hasEvent = true;
             ++sequence;
         } else if (hasEvent && frame - eventFrame < uint64_t(rate * .035f)) {
             // Retain attack peak strength without delaying the first response.
-            eventStrength = std::max(eventStrength, strength);
+            if (strength > mEventRaw) {
+                mEventRaw = strength;
+                eventStrength = std::max(eventStrength,
+                    mRanges[winningGroup].accept(winningQuality, frame, rate) * winningWeight);
+            }
         }
         const float alpha = 1.f - std::exp(-dt / .45f);
         for (int g = 0; g < 3; ++g) {
@@ -87,6 +99,8 @@ private:
     std::array<float, BINS> previous{};
     std::array<float, 3> mean{}, variance{}, previousEnergy{}, energyMean{};
     AudioLightConfig mConfig{1.f, .32f, .08f, 140, 200};
+    std::array<AudioAttackRange, 3> mRanges{};
+    float mEventRaw = 0;
     float level = .08f;
     bool primed = false;
 };

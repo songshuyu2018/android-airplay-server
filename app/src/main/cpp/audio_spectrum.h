@@ -12,7 +12,8 @@
 // Audio callback only copies PCM: no FFT, allocation or blocking lock.
 class AudioSpectrum {
 public:
-    static constexpr size_t N = 1024, HOP = 256, CAPACITY = 8192, MAX_HOPS = 12;
+    static constexpr size_t N = 1024, HOP = 256, CAPACITY = 8192, MAX_HOPS = 24;
+    static_assert(N + MAX_HOPS * HOP <= CAPACITY, "analysis must fit PCM history");
     static constexpr int BANDS = 48, VALUES = BANDS + 1; // final value: onset envelope
     void configure(const AudioLightConfig& config) {
         mOnset.configure(config);
@@ -67,10 +68,15 @@ public:
         if (first < mStart + N) first = mStart + N;
         if (end >= first && !mWriting.load()) {
             if (end - first >= MAX_HOPS * HOP) {
-                // UI stall: prime at current audio, never replay old beats.
-                first = end;
-                mOnset.reset();
-                mPulseTime = 0;
+                // Audio callbacks can deliver 4096+ frames at once even if UI polls
+                // every vsync. Analyse a bounded recent tail, not ONE priming window:
+                // repeatedly priming one window prevents every onset indefinitely.
+                const size_t skipped = end - first;
+                first = end - (MAX_HOPS - 1) * HOP;
+                if (skipped > size_t(sampleRate / 2)) {
+                    mOnset.reset();
+                    mPulseTime = 0;
+                }
             }
             const size_t begin = first - N;
             const size_t count = end - begin;

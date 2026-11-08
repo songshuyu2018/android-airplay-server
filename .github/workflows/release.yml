@@ -39,6 +39,8 @@ jobs:
           /tmp/spectrum_test
           g++ -O2 -std=c++17 -Iapp/src/main/cpp tests/audio/onset_test.cpp -o /tmp/onset_test
           /tmp/onset_test
+          g++ -O2 -std=c++17 -Iapp/src/main/cpp tests/audio/mixed_onset_test.cpp -o /tmp/mixed_onset_test
+          /tmp/mixed_onset_test
 
       - name: Test album palette contrast
         run: |
