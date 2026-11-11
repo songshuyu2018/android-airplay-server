@@ -33,6 +33,17 @@ jobs:
           javac -d /tmp/session-tests app/src/main/java/io/github/jqssun/airplay/audio/AudioSessionGate.java tests/session/AudioSessionGateTest.java
           java -cp /tmp/session-tests AudioSessionGateTest
 
+      - name: Test DACP command and endpoint recovery
+        run: |
+          mkdir -p /tmp/dacp-tests
+          javac -d /tmp/dacp-tests app/src/main/java/io/github/jqssun/airplay/audio/DacpControlState.java tests/control/DacpControlStateTest.java
+          java -cp /tmp/dacp-tests DacpControlStateTest
+          chmod +x ./gradlew
+          ./gradlew --version > /dev/null
+          compiler=$(find "${GRADLE_USER_HOME:-$HOME/.gradle}/wrapper/dists" -name 'kotlin-compiler-embeddable-*.jar' -print -quit)
+          test -n "$compiler"
+          bash tests/control/run-integration.sh "$(dirname "$compiler")"
+
       - name: Test PCM spectrum
         run: |
           g++ -std=c++17 -Iapp/src/main/cpp tests/audio/spectrum_test.cpp -o /tmp/spectrum_test

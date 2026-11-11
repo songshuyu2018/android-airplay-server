@@ -2,6 +2,8 @@ package io.github.jqssun.airplay.renderer
 
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import io.github.jqssun.airplay.bridge.NativeBridge
 import io.github.jqssun.airplay.viewmodel.AudioDebug
 
@@ -19,6 +21,7 @@ class AudioRenderer {
     private val endSilence = Runnable {
         synchronized(this) {
             temporarilySilent = false
+            Log.i("AudioRenderer", "Local mute ended at=${SystemClock.elapsedRealtime()}")
             pushGain()
         }
     }
@@ -26,6 +29,7 @@ class AudioRenderer {
     @Synchronized
     fun silenceForFiveSeconds() {
         if (temporarilySilent) return // A fixed window; repeated pauses still go to the sender.
+        Log.i("AudioRenderer", "Local mute start until=${SystemClock.elapsedRealtime() + 5000L}")
         temporarilySilent = true
         pushGain()
         handler.removeCallbacks(endSilence)

@@ -3,6 +3,9 @@ package io.github.jqssun.airplay.audio
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
@@ -11,337 +14,248 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
 
-/**
- * Sends DACP (Digital Audio Control Protocol) commands back to the AirPlay sender.
- *
- * The sender registers an mDNS service `iTunes_Ctrl_<DACP-ID>._dacp._tcp`; the app
- * learned the identifier from the session (SETUP's DACP-ID / Active-Remote headers,
- * forwarded by the receiver as `ssnc/daid` and `ssnc/acre`).
- *
- * Resolution deliberately browses rather than resolving a synthesised NsdServiceInfo:
- * resolve-by-name only answers from the system daemon's cache, which keeps serving the
- * sender's *previous* address and port after the sender restarts.  A browse makes the
- * responder announce the current SRV/A records again, and the answers arrive through
- * onServiceResolved() from that announcement.
- *
- * A command issued while the endpoint is still unknown is remembered briefly and sent
- * as soon as it resolves: the first press after a sender connects must not be lost.
- */
-class DacpController(ctx: Context) {
-
-    private val nsdManager = ctx.getSystemService(Context.NSD_SERVICE) as NsdManager
-    private val exec = Executors.newSingleThreadExecutor()
-    private val _handler = android.os.Handler(android.os.Looper.getMainLooper())
-
-    @Volatile var dacpId = ""
-        private set
-    @Volatile var activeRemote = ""
-        private set
-    @Volatile private var host = ""
-    @Volatile private var port = 0
-
-    private val lock = Any()
-    @Volatile private var generation = 0L
+/** A single main-looper owner coordinates NSD and a session-scoped command queue. */
+class DacpController(ctx: Context, private val onStateChanged: () -> Unit = {}) {
+    private val nsd = ctx.getSystemService(Context.NSD_SERVICE) as NsdManager
+    private val main = Handler(Looper.getMainLooper())
+    private val worker = Executors.newSingleThreadExecutor()
+    private val state = DacpControlState()
+    private val results = mutableMapOf<Long, SettableFuture<Unit>>()
+    @Volatile var dacpId = ""; private set
+    @Volatile var activeRemote = ""; private set
+    val ready: Boolean get() = state.ready()
+    // Capability survives temporary endpoint loss: a press can initiate recovery.
+    val canControl: Boolean get() = state.canControl()
     private var discovery: NsdManager.DiscoveryListener? = null
-    private var resolving = false
+    private var resolveToken = 0L
+    private var nextResolveToken = 0L
     private var pendingResolve: NsdServiceInfo? = null
-    private var resolveRetries = 0
-    private var browseAttempts = 0
-    private val pendingCommands = ArrayDeque<Pair<String, Long>>()
-
-    val ready: Boolean get() = host.isNotEmpty() && port > 0 && activeRemote.isNotEmpty()
-
-    fun update(dacpId: String, activeRemote: String) {
-        val idChanged = this.dacpId != dacpId || this.activeRemote != activeRemote
-        if (idChanged) synchronized(lock) {
-            generation++
-            pendingCommands.clear()
+    private var retryStep = 0
+    private var recoveryNeeded = false
+    private var recoveringScheduled = false
+    private var recoveryAt = 0L
+    private var lastBrowseAt = -10000L
+    private var closed = false
+    private var lastReady = false
+    private var lastCapable = false
+    private val recovery = Runnable {
+        recoveringScheduled = false
+        if (canControl && (recoveryNeeded || !ready)) {
+            stopDiscovery()
+            startDiscovery()
+            scheduleRecovery()
+        }
+    }
+    private val expiry = object : Runnable {
+        override fun run() {
+            if (closed) return
+            state.expire(SystemClock.elapsedRealtime())
+            drain()
+            if (results.isNotEmpty()) main.postDelayed(this, 500)
+        }
+    }
+    private fun onMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post { block() }
+    }
+    fun update(dacpId: String, activeRemote: String) = onMain {
+        if (closed) return@onMain
+        if (state.update(dacpId, activeRemote)) {
+            this.dacpId = dacpId; this.activeRemote = activeRemote
+            stopDiscovery()
             pendingResolve = null
-            resolveRetries = 0
-            browseAttempts = 0
+            retryStep = 0
+            main.removeCallbacks(recovery); recoveringScheduled = false
+            recoveryNeeded = true
         }
-        this.dacpId = dacpId
-        this.activeRemote = activeRemote
-        if (idChanged) {
-            // a different sender: whatever we resolved before cannot be it
-            host = ""
-            port = 0
-        }
-        if (!ready || idChanged) _discover(force = idChanged)
-        _flushPending()
+        if (canControl && discovery == null) startDiscovery()
+        if (canControl && !ready) scheduleRecovery()
+        drain(); publish(); pump()
     }
-
-    fun play() = _send("/ctrl-int/1/play")
-    fun pause() = _send("/ctrl-int/1/pause")
-    fun nextItem() = _send("/ctrl-int/1/nextitem")
-    fun prevItem() = _send("/ctrl-int/1/previtem")
-    fun volumeUp() = _send("/ctrl-int/1/volumeup")
-    fun volumeDown() = _send("/ctrl-int/1/volumedown")
-    fun beginFastForward() = _send("/ctrl-int/1/beginff")
-    fun beginRewind() = _send("/ctrl-int/1/beginrew")
-    fun playResume() = _send("/ctrl-int/1/playresume")
-
-    fun reset() {
-        synchronized(lock) {
-            generation++
-            pendingResolve = null
-            resolveRetries = 0
-            browseAttempts = 0
-        }
-        dacpId = ""
-        activeRemote = ""
-        host = ""
-        port = 0
-        synchronized(lock) {
-            pendingCommands.clear()
-            _stopDiscoveryLocked()
-        }
+    fun reset() = onMain {
+        state.reset(); dacpId = ""; activeRemote = ""
+        stopDiscovery(); pendingResolve = null
+        main.removeCallbacks(recovery); recoveringScheduled = false
+        recoveryNeeded = false; retryStep = 0
+        drain(); publish()
     }
-
-    fun release() {
-        reset()
-        exec.shutdownNow()
+    fun release() = onMain {
+        if (closed) return@onMain
+        closed = true; reset(); state.close(); drain()
+        main.removeCallbacks(expiry)
+        worker.shutdownNow()
     }
+    fun play(source: String = "app") = send("/ctrl-int/1/play", source)
+    fun pause(source: String = "app") = send("/ctrl-int/1/pause", source)
+    fun nextItem() = send("/ctrl-int/1/nextitem", "app")
+    fun prevItem() = send("/ctrl-int/1/previtem", "app")
+    fun volumeUp() = send("/ctrl-int/1/volumeup", "app")
+    fun volumeDown() = send("/ctrl-int/1/volumedown", "app")
+    fun beginFastForward() = send("/ctrl-int/1/beginff", "app")
+    fun beginRewind() = send("/ctrl-int/1/beginrew", "app")
+    fun playResume() = send("/ctrl-int/1/playresume", "app")
 
-    /* ---------------------------------------------------------------- discovery */
-
-    private fun _discover(force: Boolean) {
-        if (dacpId.isEmpty()) return
-        synchronized(lock) {
-            if (discovery != null) {
-                if (!force) return
-                _stopDiscoveryLocked()
-            }
-            if (browseAttempts > 4) return
-            val session = generation
-            val listener = object : NsdManager.DiscoveryListener {
-                override fun onDiscoveryStarted(serviceType: String) {
-                    Log.i(TAG, "DACP browse started for $serviceType")
-                }
-
-                override fun onServiceFound(info: NsdServiceInfo) {
-                    if (session != generation) return
-                    val wanted = "iTunes_Ctrl_$dacpId"
-                    if (!info.serviceName.equals(wanted, ignoreCase = true)) return
-                    Log.i(TAG, "DACP service found: ${info.serviceName}")
-                    _resolve(info)
-                }
-
-                override fun onServiceLost(info: NsdServiceInfo) {
-                    if (session == generation && info.serviceName.equals("iTunes_Ctrl_$dacpId", ignoreCase = true)) {
-                        Log.i(TAG, "DACP service lost: ${info.serviceName}")
-                        if (host.isNotEmpty() && info.serviceName.endsWith(dacpId)) {
-                            host = ""
-                            port = 0
-                        }
-                    }
-                }
-
-                override fun onDiscoveryStopped(serviceType: String) {}
-                override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                    Log.w(TAG, "DACP browse failed to start: $errorCode")
-                    synchronized(lock) { discovery = null }
-                }
-
-                override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
-                    Log.w(TAG, "DACP browse failed to stop: $errorCode")
-                }
-            }
-            discovery = listener
-            browseAttempts++
-            try {
-                nsdManager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
-            } catch (e: Exception) {
-                Log.w(TAG, "DACP browse error", e)
-                discovery = null
-            }
+    private fun publish() {
+        if (lastReady == ready && lastCapable == canControl) return
+        lastReady = ready; lastCapable = canControl
+        Log.i(TAG, "DACP state session=${state.session()} capable=$canControl ready=$ready")
+        if (!closed) onStateChanged()
+    }
+    private fun drain() {
+        for (completion in state.completions()) {
+            Log.i(TAG, "DACP command=${completion.id} result=${completion.outcome}")
+            val result = results.remove(completion.id) ?: continue
+            if (completion.outcome == DacpControlState.Outcome.SUCCESS) result.set(Unit)
+            else result.setException(IOException("DACP ${completion.outcome}"))
         }
     }
-
-    private fun _stopDiscoveryLocked() {
-        val listener = discovery ?: return
-        discovery = null
-        try {
-            nsdManager.stopServiceDiscovery(listener)
-        } catch (_: Exception) {
-        }
-    }
-
-    private fun _resolve(info: NsdServiceInfo) {
-        val session = generation
-        if (!info.serviceName.equals("iTunes_Ctrl_$dacpId", ignoreCase = true)) return
-        synchronized(lock) {
-            if (resolving) {
-                pendingResolve = info
-                return
-            }
-            resolving = true
-        }
-        try {
-            nsdManager.resolveService(info, object : NsdManager.ResolveListener {
-                override fun onResolveFailed(si: NsdServiceInfo, code: Int) {
-                    synchronized(lock) { resolving = false }
-                    if (session != generation) { _nextResolve(); return }
-                    if (code == NsdManager.FAILURE_ALREADY_ACTIVE) {
-                        // another resolve is in flight: try again shortly
-                        _retryResolve(si, 500)
-                    } else {
-                        Log.w(TAG, "DACP resolve failed: $code")
-                        _retryResolve(si, 1500)
-                    }
-                }
-
-                override fun onServiceResolved(si: NsdServiceInfo) {
-                    synchronized(lock) { resolving = false }
-                    if (session != generation) { _nextResolve(); return }
-                    val addr = si.host?.hostAddress
-                    if (addr.isNullOrEmpty()) {
-                        _retryResolve(si, 1500)
-                        return
-                    }
-                    host = addr
-                    port = si.port
-                    resolveRetries = 0
-                    browseAttempts = 0
-                    Log.i(TAG, "DACP resolved: $addr:${si.port} (${si.serviceName})")
-                    _nextResolve()
-                    _flushPending()
-                }
-            })
-        } catch (e: Exception) {
-            Log.w(TAG, "DACP resolve error", e)
-            synchronized(lock) { resolving = false }
-            _nextResolve()
-        }
-    }
-
-    private fun _nextResolve() {
-        val next = synchronized(lock) {
-            val n = pendingResolve
-            pendingResolve = null
-            n
-        }
-        if (next != null && !ready) _resolve(next)
-    }
-
-    private fun _retryResolve(info: NsdServiceInfo, delayMs: Long) {
-        synchronized(lock) {
-            if (resolveRetries > 3) return
-            resolveRetries++
-        }
-        val session = generation
-        val retry = Runnable { if (session == generation && !ready) _resolve(info) }
-        _handler.postDelayed(retry, delayMs)
-    }
-
-    /** Run on the single worker thread, ignoring a send that races the shutdown. */
-    private fun _post(block: () -> Unit) {
-        try {
-            exec.execute(block)
-        } catch (_: java.util.concurrent.RejectedExecutionException) {
-        }
-    }
-
-    /* ------------------------------------------------------------------- sending */
-
-    private fun _send(path: String): ListenableFuture<Unit> {
+    private fun send(path: String, source: String): ListenableFuture<Unit> {
         val result = SettableFuture.create<Unit>()
-        if (!ready) {
-            Log.i(TAG, "DACP $path queued: endpoint not resolved yet")
-            synchronized(lock) {
-                pendingCommands.addLast(path to System.currentTimeMillis())
-                while (pendingCommands.size > 8) pendingCommands.removeFirst()
-            }
-            _discover(force = false)
-            result.setException(IOException("dacp endpoint not resolved"))
-            return result
-        }
-        val h = host
-        val p = port
-        val session = generation
-        val remote = activeRemote
-        val id = dacpId
-        _post {
-            if (session != generation) {
-                result.setException(IOException("DACP session changed"))
-                return@_post
-            }
-            if (_fetch(h, p, path, id, remote)) {
-                result.set(Unit)
-            } else {
-                if (session != generation) {
-                    result.setException(IOException("DACP session changed"))
-                    return@_post
-                }
-                // the sender may have moved: forget the endpoint and look again
-                host = ""
-                port = 0
-                synchronized(lock) {
-                    pendingCommands.addLast(path to System.currentTimeMillis())
-                    while (pendingCommands.size > 8) pendingCommands.removeFirst()
-                }
-                _discover(force = true)
-                result.setException(IOException("DACP send failed"))
-            }
+        onMain {
+            if (closed) { result.setException(IOException("DACP released")); return@onMain }
+            val id = state.enqueue(path, SystemClock.elapsedRealtime())
+            results[id] = result
+            main.removeCallbacks(expiry)
+            main.postDelayed(expiry, 500)
+            Log.i(TAG, "DACP command=$id session=${state.session()} source=$source path=$path ready=$ready")
+            drain()
+            if (canControl && !ready) { recoveryNeeded = true; scheduleRecovery(immediate = true) }
+            pump()
         }
         return result
     }
-
-    private fun _flushPending() {
-        if (!ready) return
-        val commands = synchronized(lock) {
-            val now = System.currentTimeMillis()
-            val due = pendingCommands.filter { now - it.second <= PENDING_TTL_MS }.map { it.first }
-            pendingCommands.clear()
-            due
-        }
-        if (commands.isEmpty()) return
-        val h = host
-        val p = port
-        val session = generation
-        val remote = activeRemote
-        val id = dacpId
-        _post {
-            for (path in commands) {
-                if (session != generation || !_fetch(h, p, path, id, remote)) break
+    private fun pump() {
+        val attempt = state.claim(SystemClock.elapsedRealtime())
+        drain()
+        if (attempt == null) return
+        try {
+            worker.execute {
+                val attempted = state.shouldSend(attempt, SystemClock.elapsedRealtime())
+                val success = attempted && fetch(attempt)
+                main.post {
+                    state.complete(attempt, success, attempted, SystemClock.elapsedRealtime())
+                    drain(); publish()
+                    if (!closed && canControl && !ready) {
+                        recoveryNeeded = true
+                        scheduleRecovery(immediate = true)
+                    }
+                    if (!closed) pump()
+                }
             }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            state.complete(attempt, false, false, SystemClock.elapsedRealtime())
+            drain()
         }
     }
 
-    private fun _fetch(h: String, p: Int, path: String, id: String, remote: String): Boolean {
-        val url = "http://$h:$p$path"
+    private fun scheduleRecovery(immediate: Boolean = false) {
+        if (closed || !canControl) return
+        val now = SystemClock.elapsedRealtime()
+        val delay = if (immediate) maxOf(0L, 1000L - (now - lastBrowseAt))
+            else minOf(8000L, 500L shl minOf(retryStep, 4))
+        if (recoveringScheduled && recoveryAt <= now + delay) return
+        main.removeCallbacks(recovery)
+        recoveringScheduled = true; recoveryAt = now + delay
+        retryStep = minOf(retryStep + 1, 4)
+        main.postDelayed(recovery, delay)
+    }
+    private fun stopDiscovery() {
+        val old = discovery ?: return
+        discovery = null
+        try { nsd.stopServiceDiscovery(old) } catch (_: Exception) { }
+    }
+    private fun startDiscovery() {
+        if (closed || !canControl || discovery != null) return
+        val owner = state.session()
+        val wanted = "iTunes_Ctrl_$dacpId"
+        val listener = object : NsdManager.DiscoveryListener {
+            private fun valid() = !closed && state.session() == owner && discovery === this
+            override fun onDiscoveryStarted(type: String) { }
+            override fun onServiceFound(info: NsdServiceInfo) { main.post {
+                if (valid() && info.serviceName.equals(wanted, ignoreCase = true)) resolve(info)
+            } }
+            override fun onServiceLost(info: NsdServiceInfo) { main.post {
+                if (valid() && info.serviceName.equals(wanted, ignoreCase = true)) {
+                    // mDNS disappearance is a discovery signal, not proof the last
+                    // working HTTP endpoint is dead. Probe it while refreshing NSD.
+                    Log.w(TAG, "DACP service lost session=$owner; refreshing endpoint")
+                    recoveryNeeded = true
+                    scheduleRecovery()
+                }
+            } }
+            override fun onDiscoveryStopped(type: String) { main.post {
+                if (valid()) { discovery = null; recoveryNeeded = true; scheduleRecovery() }
+            } }
+            override fun onStartDiscoveryFailed(type: String, code: Int) { main.post {
+                if (valid()) {
+                    discovery = null; recoveryNeeded = true
+                    Log.w(TAG, "DACP browse failed session=$owner code=$code")
+                    scheduleRecovery()
+                }
+            } }
+            override fun onStopDiscoveryFailed(type: String, code: Int) { }
+        }
+        discovery = listener
+        lastBrowseAt = SystemClock.elapsedRealtime()
+        try { nsd.discoverServices("_dacp._tcp", NsdManager.PROTOCOL_DNS_SD, listener) }
+        catch (e: Exception) {
+            discovery = null; recoveryNeeded = true
+            Log.w(TAG, "DACP browse error", e); scheduleRecovery()
+        }
+    }
+    private fun resolve(info: NsdServiceInfo) {
+        if (closed || !canControl) return
+        if (resolveToken != 0L) { pendingResolve = info; return }
+        val owner = state.session()
+        val token = ++nextResolveToken
+        resolveToken = token
+        fun finish(resolved: NsdServiceInfo?, error: String?) {
+            if (token != resolveToken) return
+            resolveToken = 0
+            if (!closed && owner == state.session()) {
+                val address = resolved?.host?.hostAddress
+                if (resolved != null && !address.isNullOrEmpty() && state.endpoint(owner, address, resolved.port)) {
+                    recoveryNeeded = false; retryStep = 0
+                    main.removeCallbacks(recovery); recoveringScheduled = false
+                    Log.i(TAG, "DACP resolved session=$owner $address:${resolved.port}")
+                    publish(); pump()
+                } else {
+                    recoveryNeeded = true
+                    Log.w(TAG, "DACP resolve failed session=$owner reason=$error")
+                    scheduleRecovery()
+                }
+            }
+            val next = pendingResolve
+            pendingResolve = null
+            if (next != null && !closed && canControl) resolve(next)
+        }
+        try {
+            nsd.resolveService(info, object : NsdManager.ResolveListener {
+                override fun onServiceResolved(result: NsdServiceInfo) { main.post { finish(result, null) } }
+                override fun onResolveFailed(result: NsdServiceInfo, code: Int) { main.post { finish(null, code.toString()) } }
+            })
+            main.postDelayed({ finish(null, "timeout") }, 4000)
+        } catch (e: Exception) { finish(null, e.javaClass.simpleName) }
+    }
+    private fun fetch(a: DacpControlState.Attempt): Boolean {
+        var connection: HttpURLConnection? = null
         return try {
-            val conn = URL(url).openConnection() as HttpURLConnection
+            // The component constructor also brackets IPv6 literals correctly.
+            val url = URL("http", a.host, a.port, a.path)
+            val conn = url.openConnection() as HttpURLConnection
+            connection = conn
             conn.requestMethod = "GET"
-            // Apple's DACP identifies the session by BOTH headers; a request carrying
-            // only Active-Remote is ignored by most senders.
-            conn.setRequestProperty("Active-Remote", remote)
-            if (id.isNotEmpty()) conn.setRequestProperty("DACP-ID", id)
-            conn.setRequestProperty("Host", "$h:$p")
-            conn.connectTimeout = 2000
-            conn.readTimeout = 2000
+            conn.instanceFollowRedirects = false
+            conn.setRequestProperty("Active-Remote", a.activeRemote)
+            conn.setRequestProperty("DACP-ID", a.dacpId)
+            conn.setRequestProperty("Host", url.authority)
+            conn.connectTimeout = 2000; conn.readTimeout = 2000
             val code = conn.responseCode
-            try {
-                conn.inputStream.readBytes()
-            } catch (_: Exception) {
-            }
-            conn.disconnect()
-            if (code in 200..299) {
-                Log.i(TAG, "DACP $path -> $code")
-                true
-            } else {
-                Log.w(TAG, "DACP $path -> HTTP $code")
-                false
-            }
+            Log.i(TAG, "DACP command=${a.id} session=${a.session} attempt=${a.number} path=${a.path} HTTP=$code")
+            code in 200..299
         } catch (e: Exception) {
-            Log.w(TAG, "DACP send failed: $path ($h:$p): ${e.javaClass.simpleName} ${e.message}")
+            Log.w(TAG, "DACP command=${a.id} session=${a.session} attempt=${a.number} failed: ${e.javaClass.simpleName}")
             false
-        }
+        } finally { connection?.disconnect() }
     }
-
-    companion object {
-        private const val TAG = "DacpController"
-        private const val SERVICE_TYPE = "_dacp._tcp"
-        private const val PENDING_TTL_MS = 5000L
-    }
+    companion object { private const val TAG = "DacpController" }
 }

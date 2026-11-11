@@ -294,7 +294,12 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        dacpController = DacpController(this)
+        dacpController = DacpController(this) {
+            if (::dacpPlayer.isInitialized) {
+                _refreshDacpPlayer()
+                _updatePlaybackState()
+            }
+        }
         dacpPlayer = DacpPlayer(
             mainLooper,
             dacp = { dacpController },
@@ -324,17 +329,17 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
                         airPlayVideoPlayer.setPlaying(true)
                         return
                     }
-                    dacpController?.play()
+                    dacpController?.play("media-session")
                 }
                 override fun onPause() {
                     if (_videoPlaybackActive.value) {
                         airPlayVideoPlayer.setPlaying(false)
                         return
                     }
-                    pauseAudioLocally()
+                    pauseAudioLocally("media-session")
                 }
                 override fun onStop() {
-                    if (_videoPlaybackActive.value) stopVideoPlayback() else dacpController?.pause()
+                    if (_videoPlaybackActive.value) stopVideoPlayback() else pauseAudioLocally("media-session-stop")
                 }
                 override fun onFastForward() {
                     if (_videoPlaybackActive.value) airPlayVideoPlayer.seekBy(VIDEO_SEEK_STEP_MS)
@@ -356,7 +361,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         mediaReceiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
                 when (intent.action) {
-                    ACTION_PLAY_PAUSE -> togglePlayPause()
+                    ACTION_PLAY_PAUSE -> togglePlayPause("notification")
                     ACTION_NEXT -> dacpController?.nextItem()
                     ACTION_PREV -> dacpController?.prevItem()
                 }
@@ -1443,13 +1448,14 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         if (nativeHandle != 0L) NativeBridge.nativeAudioSpectrum(nativeHandle, enabled, tuning.sensitivity / 100f,
             tuning.mid / 100f, tuning.high / 100f, tuning.interval, tuning.release) else FloatArray(49)
 
-    private fun pauseAudioLocally() {
+    private fun pauseAudioLocally(source: String) {
+        Log.i(TAG, "Local pause source=$source session=${audioSessionGate.activeId()}")
         audioRenderer.silenceForFiveSeconds()
-        dacpController?.pause()
+        dacpController?.pause(source)
     }
 
-    fun togglePlayPause() {
-        if (_playing.value) pauseAudioLocally() else dacpController?.play()
+    fun togglePlayPause(source: String = "app-ui") {
+        if (_playing.value) pauseAudioLocally(source) else dacpController?.play(source)
     }
 
     private fun _setPlaying(playing: Boolean) {
@@ -1461,6 +1467,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         val position = currentPositionMs()
         _positionMs.value = position
         _playing.value = playing
+        Log.i(TAG, "Audio state playing=$playing session=${audioSessionGate.activeId()}")
         _refreshDacpPlayer()
         if (playing) {
             // resume extrapolation from current position
@@ -1483,15 +1490,13 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         val isPlaying = active && _playing.value
         val pbState = if (!active) PlaybackStateCompat.STATE_STOPPED else if (isPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED
         val speed = if (isPlaying) 1f else 0f
+        val transportActions = if (dacpController?.canControl == true)
+            PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
+                PlaybackStateCompat.ACTION_PLAY_PAUSE or PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or PlaybackStateCompat.ACTION_STOP
+            else 0L
         val state = PlaybackStateCompat.Builder()
-            .setActions(
-                PlaybackStateCompat.ACTION_PLAY or
-                    PlaybackStateCompat.ACTION_PAUSE or
-                    PlaybackStateCompat.ACTION_PLAY_PAUSE or
-                    PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
-                    PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
-                    PlaybackStateCompat.ACTION_STOP
-            )
+            .setActions(transportActions)
             .setState(pbState, currentPositionMs(), speed, SystemClock.elapsedRealtime())
             .build()
         mediaSession?.isActive = active

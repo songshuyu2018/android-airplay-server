@@ -1,6 +1,7 @@
 package io.github.jqssun.airplay.audio
 
 import android.os.Looper
+import java.io.IOException
 import androidx.media3.common.C
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -45,21 +46,14 @@ class DacpPlayer(
                 s.artworkData?.let { setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) }
             }
             .build()
+        val commands = Player.Commands.Builder().addAll(
+            Player.COMMAND_GET_CURRENT_MEDIA_ITEM, Player.COMMAND_GET_TIMELINE, Player.COMMAND_GET_METADATA)
+        if (dacp()?.canControl == true) commands.addAll(
+            Player.COMMAND_PLAY_PAUSE,
+            Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+            Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
         return State.Builder()
-            .setAvailableCommands(
-                Player.Commands.Builder()
-                    .addAll(
-                        Player.COMMAND_PLAY_PAUSE,
-                        Player.COMMAND_SEEK_TO_NEXT,
-                        Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
-                        Player.COMMAND_SEEK_TO_PREVIOUS,
-                        Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
-                        Player.COMMAND_GET_CURRENT_MEDIA_ITEM,
-                        Player.COMMAND_GET_TIMELINE,
-                        Player.COMMAND_GET_METADATA,
-                    )
-                    .build()
-            )
+            .setAvailableCommands(commands.build())
             .setPlaylist(
                 listOf(
                     MediaItemData.Builder(UID_PREVIOUS).build(),
@@ -82,13 +76,13 @@ class DacpPlayer(
 
     override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
         if (!playWhenReady) onLocalPause()
-        val dacp = dacp() ?: return Futures.immediateVoidFuture()
+        val dacp = dacp() ?: return Futures.immediateFailedFuture<Unit>(IOException("DACP unavailable"))
         // HTTP success acknowledges the command, not the sender's playback state.
-        return if (playWhenReady) dacp.play() else dacp.pause()
+        return if (playWhenReady) dacp.play("media3") else dacp.pause("media3")
     }
 
     override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> {
-        val dacp = dacp() ?: return Futures.immediateVoidFuture()
+        val dacp = dacp() ?: return Futures.immediateFailedFuture<Unit>(IOException("DACP unavailable"))
         return when (seekCommand) {
             Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM ->
                 dacp.nextItem()

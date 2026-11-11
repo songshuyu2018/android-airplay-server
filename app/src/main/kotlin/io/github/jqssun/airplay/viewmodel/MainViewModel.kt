@@ -398,7 +398,7 @@ class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app
             _audioPlaying.value = it.playing.value
             _audioPositionMs.value = it.currentPositionMs()
             _audioDurationMs.value = it.durationMs.value
-            _audioControlsReady.value = it.dacpController?.ready == true
+            _audioControlsReady.value = it.dacpController?.canControl == true
             val videoActive = it.videoPlaybackActive.value
             val playSeq = it.videoPlaySeq.value
             if (playSeq != _lastVideoPlaySeq) {
