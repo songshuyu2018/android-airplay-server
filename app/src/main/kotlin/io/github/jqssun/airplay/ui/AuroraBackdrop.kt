@@ -127,6 +127,11 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private var starProgram = 0
     private var compositeProgram = 0
     private var farBrightnessUniform = -1
+    private var starPulseUniform = -1
+    private val shapes = FloatArray(8)
+    private val shapeUniforms = IntArray(2)
+    private var starPulse = 0f
+    @Volatile private var previousPulseTime = 0L
     private var screenWidth = 1
     private var screenHeight = 1
     private var cachedQuality: AuroraQuality? = null
@@ -142,7 +147,7 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private val vertices = ByteBuffer.allocateDirect(24).order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
         put(floatArrayOf(-1f,-1f,3f,-1f,-1f,3f)); position(0)
     }
-    fun resetClock() { previous = 0 }
+    fun resetClock() { previous = 0; previousPulseTime = 0 }
     fun input(energy: Float, beat: Float, bands: FloatArray) {
         fun mean(start: Int, end: Int): Float {
             var sum = 0f
@@ -189,6 +194,9 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             GL.glBufferData(GL.GL_ARRAY_BUFFER, 24, vertices, GL.GL_STATIC_DRAW)
             GL.glEnableVertexAttribArray(0); GL.glVertexAttribPointer(0, 2, GL.GL_FLOAT, false, 0, 0)
             uniforms = locations(program)
+            shapeUniforms[0] = GL.glGetUniformLocation(program,"uShapeA")
+            shapeUniforms[1] = GL.glGetUniformLocation(program,"uShapeB")
+            starPulseUniform = GL.glGetUniformLocation(compositeProgram,"uStarPulse")
             GL.glDisable(GL.GL_DEPTH_TEST); GL.glDisable(GL.GL_BLEND)
         } catch (e: Exception) { fail(e) }
     }
@@ -219,6 +227,11 @@ private class AuroraRenderer(private val context: Context, private val failure: 
         for (i in 0..4) GL.glUniform1f(u[i+2],if (static) 0f else snapshot[i])
         GL.glUniform1f(u[7],if (static) .34f else .85f)
         GL.glUniform1f(u[8],if (static) 0f else .75f)
+        if (!static) {
+            AuroraMotion.writeShapes(time, shapes)
+            GL.glUniform4fv(shapeUniforms[0],1,shapes,0)
+            GL.glUniform4fv(shapeUniforms[1],1,shapes,4)
+        }
         GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
     }
     private fun rebuildLayers(q: AuroraQuality) {
@@ -253,7 +266,13 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             GL.glViewport(0,0,screenWidth,screenHeight)
             GL.glUseProgram(compositeProgram)
             // Cheap global opacity modulation of the cached far pair; no volume redraw.
-            val farBrightness = .84 + .10 * sin(time * .105) + .06 * sin(time * .061 + 1.3)
+            val farBrightness = .15 + 1.10 * (.5 + .5 * sin(time * .22))
+            val dt = if (previousPulseTime == 0L) 0.0 else ((now-previousPulseTime)/1e9).coerceIn(0.0,.25)
+            previousPulseTime = now
+            val targetPulse = (snapshot[4] * .85f + snapshot[2] * .15f).coerceIn(0f,1f)
+            val response = 1.0 - exp(-dt / if (targetPulse > starPulse) .035 else .22)
+            starPulse += (targetPulse-starPulse) * response.toFloat()
+            GL.glUniform1f(starPulseUniform,starPulse)
             GL.glUniform1f(farBrightnessUniform, farBrightness.toFloat())
             for ((i,name) in arrayOf("uNear","uFar","uStars").withIndex()) {
                 GL.glActiveTexture(GL.GL_TEXTURE0+i); GL.glBindTexture(GL.GL_TEXTURE_2D,textures[i])
