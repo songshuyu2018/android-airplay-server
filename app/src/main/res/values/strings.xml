@@ -230,9 +230,12 @@
     <string name="setting_player_theme_preview">主题演示（模拟播放）</string>
     <string name="setting_player_theme_preview_desc">无设备连接时模拟播放与频谱，用于验证极光主题；不播放声音，不发送反控命令。连接真实设备后自动使用真实状态。</string>
     <string name="setting_aurora_quality">极光背景画质</string>
-    <string name="setting_aurora_quality_desc">立即生效，仅调整背景。省电更轻，流畅适合手机，均衡更细腻，高清保留原画质。卡顿或发热时可降低一档。</string>
+    <string name="setting_aurora_quality_desc">仅控制背景分辨率，帧率单独设置。省电更轻，流畅适合手机，均衡更细腻，高清保留原清晰度；立即生效。</string>
     <string name="aurora_quality_saver">省电</string>
     <string name="aurora_quality_smooth">流畅</string>
     <string name="aurora_quality_balanced">均衡</string>
     <string name="aurora_quality_high">高清</string>
+    <string name="setting_aurora_fps">极光背景帧率上限</string>
+    <string name="setting_aurora_fps_desc">独立于画质，立即生效。默认 20 fps；越高越连贯，也更耗电。仅控制背景刷新，不改变极光运动速度与前景动画；实际帧率取决于设备性能和屏幕刷新率。</string>
+    <string name="aurora_fps_value">%1$d fps</string>
 </resources>

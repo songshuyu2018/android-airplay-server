@@ -23,7 +23,7 @@ import kotlin.math.*
 /** Background only: no input, playback commands, JNI or foreground drawing. */
 @Composable
 internal fun AuroraBackdrop(playing: Boolean, energy: () -> Float, beat: () -> Float,
-    spectrum: () -> FloatArray, quality: Int, modifier: Modifier = Modifier, onFailure: () -> Unit) {
+    spectrum: () -> FloatArray, quality: Int, frameRate: Int, modifier: Modifier = Modifier, onFailure: () -> Unit) {
     val context = LocalContext.current
     val lifecycle = (context as? LifecycleOwner)?.lifecycle
     val latestEnergy by rememberUpdatedState(energy)
@@ -34,7 +34,10 @@ internal fun AuroraBackdrop(playing: Boolean, energy: () -> Float, beat: () -> F
         ?.deviceConfigurationInfo?.reqGlEsVersion?.let { it >= 0x30000 } == true }
     if (!supported) { LaunchedEffect(Unit) { latestFailure() }; return }
     val view = remember(context) { AuroraView(context, { latestFailure() }) }
-    AndroidView(factory = { view }, modifier = modifier, update = { it.setQuality(AuroraQuality.fromSetting(quality)) })
+    AndroidView(factory = { view }, modifier = modifier, update = {
+        it.setQuality(AuroraQuality.fromSetting(quality))
+        it.setFrameRate(frameRate)
+    })
     DisposableEffect(view, lifecycle, playing) {
         view.input = { view.renderer.input(latestEnergy(), latestBeat(), latestSpectrum()) }
         fun sync() { view.setActive(playing && lifecycle?.currentState?.isAtLeast(Lifecycle.State.STARTED) == true) }
@@ -53,6 +56,7 @@ private class AuroraView(context: Context, failure: () -> Unit) : GLSurfaceView(
     private var suspended = false
     private var lastRequest = 0L
     private var quality = AuroraQuality.SMOOTH
+    private var frameIntervalNanos = AuroraFrameRate.intervalNanos(20)
     init {
         setEGLContextClientVersion(3)
         setEGLConfigChooser(8, 8, 8, 8, 0, 0)
@@ -80,6 +84,12 @@ private class AuroraView(context: Context, failure: () -> Unit) : GLSurfaceView(
         resizeBackground(width, height)
         // Keep the GL context and animation clock when switching quality.
     }
+    fun setFrameRate(value: Int) {
+        val interval = AuroraFrameRate.intervalNanos(value)
+        if (frameIntervalNanos == interval) return
+        frameIntervalNanos = interval
+        lastRequest = 0L
+    }
     fun setActive(value: Boolean) {
         if (active == value && suspended == !value) return
         suspended = !value
@@ -92,7 +102,7 @@ private class AuroraView(context: Context, failure: () -> Unit) : GLSurfaceView(
     }
     override fun doFrame(now: Long) {
         if (!active) return
-        if (lastRequest == 0L || now - lastRequest >= quality.frameIntervalNanos - 1_000_000L) {
+        if (lastRequest == 0L || now - lastRequest >= frameIntervalNanos - 1_000_000L) {
             input?.invoke()
             requestRender()
             lastRequest = now
