@@ -85,6 +85,9 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     val connections by viewModel.connectionCount.collectAsState()
     val audioOnly by viewModel.audioOnly.collectAsState()
     val reportedPlaying by viewModel.audioPlaying.collectAsState()
+    val auroraEnabled by viewModel.pref(Prefs.PLAYER_AURORA).collectAsState()
+    var auroraFailed by remember { mutableStateOf(false) }
+    LaunchedEffect(auroraEnabled) { auroraFailed = false }
     val lightTuningEnabled by viewModel.pref(Prefs.PLAYER_LIGHT_TUNING).collectAsState()
     val controlsReady by viewModel.audioControlsReady.collectAsState()
     val connected = connections > 0 && audioOnly
@@ -115,7 +118,9 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         }
     }
     var targetColors by remember { mutableStateOf(DefaultPlayerColors) }
-    val colors = animatedColors(targetColors)
+    val colors = animatedColors(if (auroraEnabled && !auroraFailed) PlayerColors(
+        Color(0xFF010405), Color(0xFF123D31), Color(0xFF17152A),
+        Color(0xFFF1F5F3), Color(0xFFC2CECA), Color(0xFFC2DECF)) else targetColors)
     val playFocus = remember { FocusRequester() }
     LaunchedEffect(track.coverArt) { targetColors = withContext(Dispatchers.Default) { coverColors(track.coverArt) } }
     DisposableEffect(activity) {
@@ -194,7 +199,11 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         val controlGap = (if (compact) 16.dp else 26.dp) * controlScale
         val titleSize = minOf(if (square) 28f else if (compact) 27f else 40f,
             detailsWidth.value * .12f).coerceAtLeast(18f).sp
-        PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue },
+        if (auroraEnabled && !auroraFailed) AuroraBackdrop(
+            playing, energy = { lightEnergy.floatValue }, beat = { lightBeat.floatValue },
+            spectrum = { spectrum.value }, modifier = Modifier.fillMaxSize(),
+            onFailure = { auroraFailed = true })
+        else PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue },
             beat = { lightBeat.floatValue }, tuning = lightTuning)
         Row(Modifier.fillMaxSize().padding(horizontal = edge).padding(top = topGap, bottom = if (compact) 18.dp else 40.dp), verticalAlignment = Alignment.CenterVertically) {
             BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
