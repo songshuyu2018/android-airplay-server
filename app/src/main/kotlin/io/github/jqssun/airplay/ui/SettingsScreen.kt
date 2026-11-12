@@ -45,6 +45,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
     val aacEnabled by viewModel.pref(Prefs.AAC_ENABLED).collectAsState()
     val resolution by viewModel.pref(Prefs.RESOLUTION).collectAsState()
     val themePreview by viewModel.pref(Prefs.PLAYER_THEME_PREVIEW).collectAsState()
+    val auroraQuality by viewModel.pref(Prefs.PLAYER_AURORA_QUALITY).collectAsState()
     val playerAurora by viewModel.pref(Prefs.PLAYER_AURORA).collectAsState()
     val playerLightTuning by viewModel.pref(Prefs.PLAYER_LIGHT_TUNING).collectAsState()
     val idlePreview by viewModel.pref(Prefs.IDLE_PREVIEW).collectAsState()
@@ -204,6 +205,19 @@ fun SettingsScreen(viewModel: MainViewModel) {
             description = stringResource(R.string.setting_player_aurora_desc),
             checked = playerAurora,
             onCheckedChange = { viewModel.set(Prefs.PLAYER_AURORA, it) }
+        )
+
+        SettingSegmented(
+            title = stringResource(R.string.setting_aurora_quality),
+            summary = stringResource(R.string.setting_aurora_quality_desc),
+            value = auroraQuality,
+            options = listOf(
+                0 to stringResource(R.string.aurora_quality_saver),
+                1 to stringResource(R.string.aurora_quality_smooth),
+                2 to stringResource(R.string.aurora_quality_balanced),
+                3 to stringResource(R.string.aurora_quality_high),
+            ),
+            onValueChange = { viewModel.set(Prefs.PLAYER_AURORA_QUALITY, it) }
         )
 
         SettingSwitch(

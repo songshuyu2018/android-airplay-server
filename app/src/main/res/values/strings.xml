@@ -229,4 +229,10 @@
     <string name="setting_player_aurora_desc">开启使用星空极光，关闭切回封面渐变；仅改变背景与前景配色。</string>
     <string name="setting_player_theme_preview">主题演示（模拟播放）</string>
     <string name="setting_player_theme_preview_desc">无设备连接时模拟播放与频谱，用于验证极光主题；不播放声音，不发送反控命令。连接真实设备后自动使用真实状态。</string>
+    <string name="setting_aurora_quality">极光背景画质</string>
+    <string name="setting_aurora_quality_desc">立即生效，仅调整背景。省电更轻，流畅适合手机，均衡更细腻，高清保留原画质。卡顿或发热时可降低一档。</string>
+    <string name="aurora_quality_saver">省电</string>
+    <string name="aurora_quality_smooth">流畅</string>
+    <string name="aurora_quality_balanced">均衡</string>
+    <string name="aurora_quality_high">高清</string>
 </resources>

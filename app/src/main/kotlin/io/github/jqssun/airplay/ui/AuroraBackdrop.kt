@@ -23,7 +23,7 @@ import kotlin.math.*
 /** Background only: no input, playback commands, JNI or foreground drawing. */
 @Composable
 internal fun AuroraBackdrop(playing: Boolean, energy: () -> Float, beat: () -> Float,
-    spectrum: () -> FloatArray, modifier: Modifier = Modifier, onFailure: () -> Unit) {
+    spectrum: () -> FloatArray, quality: Int, modifier: Modifier = Modifier, onFailure: () -> Unit) {
     val context = LocalContext.current
     val lifecycle = (context as? LifecycleOwner)?.lifecycle
     val latestEnergy by rememberUpdatedState(energy)
@@ -34,7 +34,7 @@ internal fun AuroraBackdrop(playing: Boolean, energy: () -> Float, beat: () -> F
         ?.deviceConfigurationInfo?.reqGlEsVersion?.let { it >= 0x30000 } == true }
     if (!supported) { LaunchedEffect(Unit) { latestFailure() }; return }
     val view = remember(context) { AuroraView(context, { latestFailure() }) }
-    AndroidView(factory = { view }, modifier = modifier)
+    AndroidView(factory = { view }, modifier = modifier, update = { it.setQuality(AuroraQuality.fromSetting(quality)) })
     DisposableEffect(view, lifecycle, playing) {
         view.input = { view.renderer.input(latestEnergy(), latestBeat(), latestSpectrum()) }
         fun sync() { view.setActive(playing && lifecycle?.currentState?.isAtLeast(Lifecycle.State.STARTED) == true) }
@@ -52,6 +52,7 @@ private class AuroraView(context: Context, failure: () -> Unit) : GLSurfaceView(
     private var active = false
     private var suspended = false
     private var lastRequest = 0L
+    private var quality = AuroraQuality.SMOOTH
     init {
         setEGLContextClientVersion(3)
         setEGLConfigChooser(8, 8, 8, 8, 0, 0)
@@ -64,10 +65,20 @@ private class AuroraView(context: Context, failure: () -> Unit) : GLSurfaceView(
     }
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        if (w > 0 && h > 0) {
-            val scale = minOf(1.0, 960.0 / w, 720.0 / h, sqrt(518400.0 / (w.toDouble() * h)))
-            holder.setFixedSize(max(1, (w * scale).roundToInt()), max(1, (h * scale).roundToInt()))
-        }
+        resizeBackground(w, h)
+    }
+    private fun resizeBackground(w: Int, h: Int) {
+        if (w <= 0 || h <= 0) return
+        val (bufferWidth, bufferHeight) = quality.bufferSize(w, h)
+        // Only the SurfaceView buffer is reduced. Compose keeps full display resolution.
+        holder.setFixedSize(bufferWidth, bufferHeight)
+    }
+    fun setQuality(value: AuroraQuality) {
+        if (quality == value) return
+        quality = value
+        lastRequest = 0L
+        resizeBackground(width, height)
+        // Keep the GL context and animation clock when switching quality.
     }
     fun setActive(value: Boolean) {
         if (active == value && suspended == !value) return
@@ -81,7 +92,7 @@ private class AuroraView(context: Context, failure: () -> Unit) : GLSurfaceView(
     }
     override fun doFrame(now: Long) {
         if (!active) return
-        if (lastRequest == 0L || now - lastRequest >= 32_000_000L) {
+        if (lastRequest == 0L || now - lastRequest >= quality.frameIntervalNanos - 1_000_000L) {
             input?.invoke()
             requestRender()
             lastRequest = now
