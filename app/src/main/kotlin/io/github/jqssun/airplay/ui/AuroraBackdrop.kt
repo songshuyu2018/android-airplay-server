@@ -73,9 +73,9 @@ private class AuroraView(context: Context, failure: () -> Unit) : GLSurfaceView(
     }
     private fun resizeBackground(w: Int, h: Int) {
         if (w <= 0 || h <= 0) return
-        val (bufferWidth, bufferHeight) = quality.bufferSize(w, h)
-        // Only the SurfaceView buffer is reduced. Compose keeps full display resolution.
-        holder.setFixedSize(bufferWidth, bufferHeight)
+        // Full-resolution output keeps cached stars sharp; only aurora FBOs are scaled.
+        renderer.quality = quality
+        requestRender()
     }
     fun setQuality(value: AuroraQuality) {
         if (quality == value) return
@@ -121,7 +121,19 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     @Volatile var running = false
     @Volatile private var previous = 0L
     private var time = 12.0
+    @Volatile var quality = AuroraQuality.SMOOTH
     private var program = 0
+    private var farProgram = 0
+    private var starProgram = 0
+    private var compositeProgram = 0
+    private var screenWidth = 1
+    private var screenHeight = 1
+    private var cachedQuality: AuroraQuality? = null
+    private var dirty = true
+    private val textures = IntArray(3)
+    private val framebuffers = IntArray(3)
+    private var bufferWidth = 1
+    private var bufferHeight = 1
     private val values = FloatArray(5)
     private val snapshot = FloatArray(5)
     private val lock = Any()
@@ -149,43 +161,101 @@ private class AuroraRenderer(private val context: Context, private val failure: 
         if (ok[0] == 0) { val log = GL.glGetShaderInfoLog(id); GL.glDeleteShader(id); error(log) }
         return id
     }
+    private fun link(fragmentSource: String): Int {
+        val vertex = shader(GL.GL_VERTEX_SHADER, "#version 300 es\nlayout(location=0) in vec2 position;void main(){gl_Position=vec4(position,0.,1.);}")
+        val fragment = try { shader(GL.GL_FRAGMENT_SHADER, fragmentSource) }
+            catch (e: Exception) { GL.glDeleteShader(vertex); throw e }
+        val p = GL.glCreateProgram()
+        GL.glAttachShader(p, vertex); GL.glAttachShader(p, fragment); GL.glLinkProgram(p)
+        GL.glDeleteShader(vertex); GL.glDeleteShader(fragment)
+        val ok = IntArray(1); GL.glGetProgramiv(p, GL.GL_LINK_STATUS, ok, 0)
+        if (ok[0] == 0) { val log = GL.glGetProgramInfoLog(p); GL.glDeleteProgram(p); error(log) }
+        return p
+    }
+    private fun source(id: Int) = context.resources.openRawResource(id).bufferedReader().use { it.readText() }
     override fun onSurfaceCreated(unused: GL10?, config: EGLConfig?) {
-        program = 0
-        previous = 0
-        GL.glClearColor(0f, 3f/255f, 5f/255f, 1f)
+        program = 0; previous = 0; dirty = true; cachedQuality = null
+        textures.fill(0); framebuffers.fill(0)
+        GL.glClearColor(0f, 0f, 0f, 1f)
         try {
-            val vertex = shader(GL.GL_VERTEX_SHADER, "#version 300 es\nin vec2 position;void main(){gl_Position=vec4(position,0.,1.);}")
-            val fragment = try { shader(GL.GL_FRAGMENT_SHADER, context.resources.openRawResource(R.raw.aurora_fragment).bufferedReader().use { it.readText() }) }
-                catch (e: Exception) { GL.glDeleteShader(vertex); throw e }
-            val p = GL.glCreateProgram()
-            GL.glAttachShader(p, vertex); GL.glAttachShader(p, fragment); GL.glLinkProgram(p)
-            GL.glDeleteShader(vertex); GL.glDeleteShader(fragment)
-            val ok = IntArray(1); GL.glGetProgramiv(p, GL.GL_LINK_STATUS, ok, 0)
-            if (ok[0] == 0) { val log = GL.glGetProgramInfoLog(p); GL.glDeleteProgram(p); error(log) }
-            program = p
-            GL.glUseProgram(p)
-            val position = GL.glGetAttribLocation(p, "position")
+            val volume = source(R.raw.aurora_fragment)
+            program = link(volume)
+            farProgram = link(volume.replace("#version 300 es", "#version 300 es\n#define FAR_LAYER"))
+            starProgram = link(source(R.raw.aurora_stars))
+            compositeProgram = link(source(R.raw.aurora_composite))
             val vbo = IntArray(1); GL.glGenBuffers(1, vbo, 0); GL.glBindBuffer(GL.GL_ARRAY_BUFFER, vbo[0])
             GL.glBufferData(GL.GL_ARRAY_BUFFER, 24, vertices, GL.GL_STATIC_DRAW)
-            GL.glEnableVertexAttribArray(position); GL.glVertexAttribPointer(position, 2, GL.GL_FLOAT, false, 0, 0)
-            uniforms = arrayOf("uResolution","uTime","uBass","uMid","uHigh","uEnergy","uBeat","uIntensity","uMotion").map { GL.glGetUniformLocation(p,it) }.toIntArray()
+            GL.glEnableVertexAttribArray(0); GL.glVertexAttribPointer(0, 2, GL.GL_FLOAT, false, 0, 0)
+            uniforms = locations(program)
             GL.glDisable(GL.GL_DEPTH_TEST); GL.glDisable(GL.GL_BLEND)
-        } catch (e: Exception) { Log.e("Aurora", "Cannot initialize background", e); failure() }
+        } catch (e: Exception) { fail(e) }
+    }
+    private fun locations(p: Int) = arrayOf("uResolution","uTime","uBass","uMid","uHigh","uEnergy","uBeat","uIntensity","uMotion")
+        .map { GL.glGetUniformLocation(p,it) }.toIntArray()
+    private fun fail(e: Exception) {
+        program = 0
+        Log.e("Aurora", "Cannot render layered background", e); failure()
     }
     override fun onSurfaceChanged(unused: GL10?, width: Int, height: Int) {
-        GL.glViewport(0,0,width,height)
-        if (program != 0) { GL.glUseProgram(program); GL.glUniform2f(uniforms[0],width.toFloat(),height.toFloat()) }
+        screenWidth = max(1, width); screenHeight = max(1, height); dirty = true
+    }
+    private fun target(index: Int, width: Int, height: Int) {
+        GL.glBindTexture(GL.GL_TEXTURE_2D, textures[index])
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE)
+        GL.glTexImage2D(GL.GL_TEXTURE_2D,0,GL.GL_RGBA8,width,height,0,GL.GL_RGBA,GL.GL_UNSIGNED_BYTE,null)
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,framebuffers[index])
+        GL.glFramebufferTexture2D(GL.GL_FRAMEBUFFER,GL.GL_COLOR_ATTACHMENT0,GL.GL_TEXTURE_2D,textures[index],0)
+        check(GL.glCheckFramebufferStatus(GL.GL_FRAMEBUFFER) == GL.GL_FRAMEBUFFER_COMPLETE) { "Incomplete aurora layer" }
+    }
+    private fun volume(p: Int, u: IntArray, static: Boolean) {
+        GL.glUseProgram(p)
+        GL.glUniform2f(u[0],bufferWidth.toFloat(),bufferHeight.toFloat())
+        GL.glUniform1f(u[1],if (static) 12f else time.toFloat())
+        for (i in 0..4) GL.glUniform1f(u[i+2],if (static) 0f else snapshot[i])
+        GL.glUniform1f(u[7],if (static) .34f else .85f)
+        GL.glUniform1f(u[8],if (static) 0f else .75f)
+        GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
+    }
+    private fun rebuildLayers(q: AuroraQuality) {
+        GL.glDeleteTextures(3,textures,0); GL.glDeleteFramebuffers(3,framebuffers,0)
+        GL.glGenTextures(3,textures,0); GL.glGenFramebuffers(3,framebuffers,0)
+        val size = q.bufferSize(screenWidth, screenHeight)
+        bufferWidth = size.first; bufferHeight = size.second
+        target(0,bufferWidth,bufferHeight)
+        target(1,bufferWidth,bufferHeight)
+        GL.glViewport(0,0,bufferWidth,bufferHeight)
+        volume(farProgram,locations(farProgram),true)
+        target(2,screenWidth,screenHeight)
+        GL.glViewport(0,0,screenWidth,screenHeight)
+        GL.glUseProgram(starProgram)
+        GL.glUniform2f(GL.glGetUniformLocation(starProgram,"uResolution"),screenWidth.toFloat(),screenHeight.toFloat())
+        GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
+        cachedQuality = q; dirty = false
     }
     override fun onDrawFrame(unused: GL10?) {
         if (program == 0) { GL.glClear(GL.GL_COLOR_BUFFER_BIT); return }
-        synchronized(lock) { values.copyInto(snapshot) }
-        val now = System.nanoTime()
-        if (running && previous != 0L) time += ((now-previous)/1e9).coerceIn(0.0,.1) * (1.0 + snapshot[0]*.75*.18 + snapshot[4]*.75*.12)
-        previous = if (running) now else 0L
-        GL.glUseProgram(program)
-        GL.glUniform1f(uniforms[1],time.toFloat())
-        for (i in 0..4) GL.glUniform1f(uniforms[i+2],snapshot[i])
-        GL.glUniform1f(uniforms[7],.85f); GL.glUniform1f(uniforms[8],.75f)
-        GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
+        try {
+            synchronized(lock) { values.copyInto(snapshot) }
+            val now = System.nanoTime()
+            if (running && previous != 0L) time += ((now-previous)/1e9).coerceIn(0.0,.1) * (1.0 + snapshot[0]*.75*.18 + snapshot[4]*.75*.12)
+            previous = if (running) now else 0L
+            val q = quality
+            if (dirty || cachedQuality != q) rebuildLayers(q)
+            GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,framebuffers[0])
+            GL.glViewport(0,0,bufferWidth,bufferHeight)
+            volume(program,uniforms,false)
+            GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,0)
+            GL.glViewport(0,0,screenWidth,screenHeight)
+            GL.glUseProgram(compositeProgram)
+            for ((i,name) in arrayOf("uNear","uFar","uStars").withIndex()) {
+                GL.glActiveTexture(GL.GL_TEXTURE0+i); GL.glBindTexture(GL.GL_TEXTURE_2D,textures[i])
+                GL.glUniform1i(GL.glGetUniformLocation(compositeProgram,name),i)
+            }
+            GL.glUniform2f(GL.glGetUniformLocation(compositeProgram,"uResolution"),screenWidth.toFloat(),screenHeight.toFloat())
+            GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
+        } catch (e: Exception) { GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,0); fail(e) }
     }
 }

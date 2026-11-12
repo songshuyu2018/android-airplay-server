@@ -140,20 +140,56 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
         float dfn = (z - frontNeighbour) / nearNeighbourWidth;
         float drn = (z - rearNeighbour) / farNeighbourWidth;
         // Even the widest halo is below exp(-12.8) beyond eight sigmas.
-        if (min(min(abs(df), abs(dr)), min(abs(dfn), abs(drn))) > 8.0) continue;
+#ifdef FAR_LAYER
+        if (min(abs(dr),abs(drn)) > 8.0) continue;
+#else
+        if (min(abs(df),abs(dfn)) > 8.0) continue;
+#endif
+#ifndef FAR_LAYER
         float frontDensity = exp(-df * df) * (0.20 / frontWidth) * 0.90;
+#else
+        const float frontDensity = 0.0;
+#endif
+#ifdef FAR_LAYER
         float rearDensity = exp(-dr * dr) * (0.25 / rearWidth) * 0.78 * 0.90;
+#else
+        const float rearDensity = 0.0;
+#endif
+#ifndef FAR_LAYER
         float frontNeighbourDensity = exp(-dfn * dfn) * (0.20 / nearNeighbourWidth) * 0.58;
+#else
+        const float frontNeighbourDensity = 0.0;
+#endif
+#ifdef FAR_LAYER
         float rearNeighbourDensity = exp(-drn * drn) * (0.25 / farNeighbourWidth) * 0.78 * 0.58;
+#else
+        const float rearNeighbourDensity = 0.0;
+#endif
         vec3 nearCycle = columnLifecycle(x, t, p.y - 2.64, 1.3, 0.12, 44.0, 0.68, 0.88);
         vec3 farCycle = columnLifecycle(rearX, t, p.y - 2.64, 4.7, 0.02, 59.0, 0.76, 0.91);
         // Independent long lifetimes and starting phases allow varied overlaps.
         vec3 nearNeighbourCycle = columnLifecycle(x + 0.33, t, p.y - 2.64, 2.1, 0.42, 51.0, 0.66, 0.86);
         vec3 farNeighbourCycle = columnLifecycle(rearX - 0.27, t, p.y - 2.64, 5.6, 0.24, 67.0, 0.73, 0.93);
+#ifndef FAR_LAYER
         float nearPresence = nearCycle.x;
+#else
+        const float nearPresence = 0.0;
+#endif
+#ifdef FAR_LAYER
         float farPresence = farCycle.x;
+#else
+        const float farPresence = 0.0;
+#endif
+#ifndef FAR_LAYER
         float nearNeighbourPresence = nearNeighbourCycle.x;
+#else
+        const float nearNeighbourPresence = 0.0;
+#endif
+#ifdef FAR_LAYER
         float farNeighbourPresence = farNeighbourCycle.x;
+#else
+        const float farNeighbourPresence = 0.0;
+#endif
         vec4 visible = vec4(frontDensity * nearPresence, rearDensity * farPresence,
                             frontNeighbourDensity * nearNeighbourPresence,
                             rearNeighbourDensity * farNeighbourPresence);
@@ -241,24 +277,11 @@ void main() {
     vec2 p = vec2((uv.x - 0.5) * aspect, uv.y - 0.5);
     float t = uTime;
 
-    vec3 color = vec3(0.0015, 0.0038, 0.0070);
-    float star = starField(p, 98.0, 2.7) + starField(p, 163.0, 18.9) * 0.42;
-    color += vec3(0.70, 0.79, 0.93) * star * 1.55;
-
+    vec3 color = vec3(0.0);
     vec3 aurora = auroraVolume(uv - 0.5, aspect, t);
     float rightShade = mix(1.0, 0.78, smoothstep(0.44, 0.99, uv.x));
     float lowerShade = mix(0.35, 1.0, smoothstep(0.02, 0.40, uv.y));
     color += aurora * rightShade * lowerShade * clamp(uIntensity, 0.0, 2.0);
 
-    // Fixed exposure lets music animate the aurora without flashing stars
-    // or changing the contrast of the foreground player and lyrics.
-    color = 1.0 - exp(-color * 1.72);
-    color *= 1.0 - 0.19 * smoothstep(0.20, 0.87, length(uv - 0.5));
-    color += (hash21(gl_FragCoord.xy + 0.37) - 0.5) / 420.0;
-    vec3 shade = vec3(0.0, 3.0/255.0, 5.0/255.0);
-    float horizontal = uv.x < 0.48 ? mix(0.0, 0.04, clamp((uv.x-0.28)/0.20,0.0,1.0)) : mix(0.04,0.24,(uv.x-0.48)/0.52);
-    float sy = 1.0-uv.y;
-    float vertical = sy < 0.38 ? mix(0.02,0.04,sy/0.38) : mix(0.04,0.50,(sy-0.38)/0.62);
-    color = mix(mix(color,shade,horizontal),shade,vertical);
-    fragColor = vec4(max(color, 0.0), 1.0);
+    fragColor = vec4(1.0 - exp(-max(color,0.0) * 1.72), 1.0);
 }
