@@ -85,13 +85,19 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     val connections by viewModel.connectionCount.collectAsState()
     val audioOnly by viewModel.audioOnly.collectAsState()
     val reportedPlaying by viewModel.audioPlaying.collectAsState()
+    val previewRequested by viewModel.pref(Prefs.PLAYER_THEME_PREVIEW).collectAsState()
     val auroraEnabled by viewModel.pref(Prefs.PLAYER_AURORA).collectAsState()
     var auroraFailed by remember { mutableStateOf(false) }
     LaunchedEffect(auroraEnabled) { auroraFailed = false }
     val lightTuningEnabled by viewModel.pref(Prefs.PLAYER_LIGHT_TUNING).collectAsState()
     val controlsReady by viewModel.audioControlsReady.collectAsState()
     val connected = connections > 0 && audioOnly
-    val playing = connected && reportedPlaying
+    val previewPlaying = PlayerThemePreview.enabled(previewRequested, auroraEnabled, connections)
+    val latestPreview by rememberUpdatedState(previewPlaying)
+    val previewValues = remember { FloatArray(49) }
+    val previewEpoch = remember { System.nanoTime() }
+    LaunchedEffect(previewPlaying) { if (previewPlaying) viewModel.audioSpectrum(false) }
+    val playing = previewPlaying || (connected && reportedPlaying)
     val latestPlaying by rememberUpdatedState(playing)
     val activity = LocalContext.current as? Activity
     val lifecycle = (activity as? LifecycleOwner)?.lifecycle
@@ -155,7 +161,9 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                     val dt = if (previous == 0L) 1f / 60f else
                         ((now - previous) / 1e9f).coerceIn(0f, .1f)
                     previous = now
-                    val values = viewModel.audioSpectrum(latestPlaying, latestTuning)
+                    val values = if (latestPreview)
+                        PlayerThemePreview.sample(((now - previewEpoch) / 1e9).toFloat(), previewValues)
+                    else viewModel.audioSpectrum(latestPlaying, latestTuning)
                     if (latestPlaying && values.isNotEmpty()) {
                         var sum = 0f
                         for (i in 0 until minOf(16, values.size)) {

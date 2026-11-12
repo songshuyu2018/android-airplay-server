@@ -112,6 +112,7 @@ object Prefs {
     val ADVERTISE_VIDEO = bool("advertise_video", true, restart = true)
     val ADVERTISE_MIRRORING = bool("advertise_mirroring", true, restart = true)
     val ADVERTISE_AUDIO = bool("advertise_audio", true, restart = true)
+    val PLAYER_THEME_PREVIEW = bool("player_theme_preview", true) // Temporary visual-only debug mode.
     val PLAYER_AURORA = bool("player_aurora", true) // Debug rollout default; explicit user choice persists.
     val PLAYER_LIGHT_TUNING = bool("player_light_tuning", false)
     val AUDIO_IDLE_RETURN_HOME = bool("audio_idle_return_home", true)

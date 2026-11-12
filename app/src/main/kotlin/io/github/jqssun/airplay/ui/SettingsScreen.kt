@@ -44,6 +44,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
     val alacEnabled by viewModel.pref(Prefs.ALAC_ENABLED).collectAsState()
     val aacEnabled by viewModel.pref(Prefs.AAC_ENABLED).collectAsState()
     val resolution by viewModel.pref(Prefs.RESOLUTION).collectAsState()
+    val themePreview by viewModel.pref(Prefs.PLAYER_THEME_PREVIEW).collectAsState()
     val playerAurora by viewModel.pref(Prefs.PLAYER_AURORA).collectAsState()
     val playerLightTuning by viewModel.pref(Prefs.PLAYER_LIGHT_TUNING).collectAsState()
     val idlePreview by viewModel.pref(Prefs.IDLE_PREVIEW).collectAsState()
@@ -203,6 +204,13 @@ fun SettingsScreen(viewModel: MainViewModel) {
             description = stringResource(R.string.setting_player_aurora_desc),
             checked = playerAurora,
             onCheckedChange = { viewModel.set(Prefs.PLAYER_AURORA, it) }
+        )
+
+        SettingSwitch(
+            title = stringResource(R.string.setting_player_theme_preview),
+            description = stringResource(R.string.setting_player_theme_preview_desc),
+            checked = themePreview,
+            onCheckedChange = { viewModel.set(Prefs.PLAYER_THEME_PREVIEW, it) }
         )
 
         SettingSwitch(
