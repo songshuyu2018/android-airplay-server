@@ -3,11 +3,12 @@ precision highp float;
 uniform vec2 uResolution;
 uniform sampler2D uNear;
 uniform sampler2D uFar;
+uniform float uFarBrightness;
 uniform sampler2D uStars;
 out vec4 fragColor;
 void main() {
  vec2 uv=gl_FragCoord.xy/uResolution;
- vec3 aurora=1.-(1.-texture(uNear,uv).rgb)*(1.-texture(uFar,uv).rgb);
+ vec3 aurora=1.-(1.-texture(uNear,uv).rgb)*(1.-texture(uFar,uv).rgb*uFarBrightness);
  vec4 stars=texture(uStars,uv);
  // Black base, cached far pair, animated near pair, then alpha-brightness stars.
  vec3 color=mix(aurora,stars.rgb,stars.a);

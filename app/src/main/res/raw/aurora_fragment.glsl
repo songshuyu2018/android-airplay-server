@@ -76,10 +76,10 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
     float energy = clamp(uEnergy * response, 0.0, 1.5);
     float beat = clamp(uBeat * response, 0.0, 1.5);
 
-    // Continuous world-space advection moves entire luminous folds through
-    // the atmosphere. The nearer sheet drifts faster than the distant one;
-    // a slow wind swell changes their speed without resetting the pattern.
-    float nearDrift = t * 0.068 + 0.30 * sin(t * 0.040) + 0.06 * sin(t * 0.18);
+    // Bounded, reversing sway instead of endless lateral translation.
+    // Fold phases and amplitudes breathe independently like a floating ribbon.
+    // Geometry remains independent of height, keeping magnetic rays straight.
+    float nearDrift = 0.34 * sin(t * 0.045) + 0.14 * (sin(t * 0.083 + 0.8) - sin(0.8));
     float farDrift = t * 0.032
                    + 0.18 * (sin(t * 0.031 + 1.30) - sin(1.30))
                    + 0.028 * (sin(t * 0.13 + 0.8) - sin(0.8));
@@ -106,13 +106,13 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
         // Broad folds and smaller eddies have incommensurate scales. The two
         // sheets share a field direction, while their waves evolve separately.
         float largeFold = noise21(vec2(x * 0.80, t * 0.030));
-        float front = 3.20 + 1.15 * sin(x * 0.72 + t * 0.009)
-                           + 0.46 * sin(x * 1.90 - t * 0.020)
+        float front = 3.20 + (1.10 + 0.16 * sin(t * 0.071)) * sin(x * 0.72 + 0.28 * sin(t * 0.047))
+                           + 0.46 * sin(x * 1.90 + 0.36 * sin(t * 0.063 + 1.2))
                            + 0.40 * (largeFold - 0.5);
         float rear = 5.30 + 1.10 * sin(rearX * 0.58 + 1.30 + t * 0.004)
                           + 0.40 * sin(rearX * 2.30 - t * 0.012);
-        float frontSlope = 1.15 * 0.72 * cos(x * 0.72 + t * 0.009)
-                         + 0.46 * 1.90 * cos(x * 1.90 - t * 0.020);
+        float frontSlope = (1.10 + 0.16 * sin(t * 0.071)) * 0.72 * cos(x * 0.72 + 0.28 * sin(t * 0.047))
+                         + 0.46 * 1.90 * cos(x * 1.90 + 0.36 * sin(t * 0.063 + 1.2));
         float rearSlope = 1.10 * 0.58 * cos(rearX * 0.58 + 1.30 + t * 0.004)
                         + 0.40 * 2.30 * cos(rearX * 2.30 - t * 0.012);
         float frontFootprint = abs(1.0 - dxDz * frontSlope) * depthStep;
@@ -121,14 +121,14 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
         float rearWidth = sqrt(0.25 * 0.25 + rearFootprint * rearFootprint / 6.0);
         // Each original sheet gets a neighbouring, softly corrugated companion.
         // The separations vary gently, so nearby sheets can merge and part.
-        float frontNeighbour = 3.98 + 0.94 * sin(x * 0.67 + 0.26 + t * 0.007)
-                             + 0.34 * sin(x * 1.54 + 1.20 - t * 0.012)
+        float frontNeighbour = 3.98 + (0.94 + 0.13 * sin(t * 0.059 + 2.0)) * sin(x * 0.67 + 0.26 + 0.31 * sin(t * 0.041 + 1.4))
+                             + 0.34 * sin(x * 1.54 + 1.20 + 0.32 * sin(t * 0.057 + 2.3))
                              + 0.24 * (noise21(vec2(x * 0.67 + 5.4, t * 0.022 + 7.0)) - 0.5);
         float rearNeighbour = 6.20 + 0.84 * sin(rearX * 0.73 + 0.96 - t * 0.004)
                             + 0.28 * sin(rearX * 1.87 + 2.10 + t * 0.016)
                             + 0.23 * (noise21(vec2(rearX * 0.91 + 9.2, t * 0.019 + 3.0)) - 0.5);
-        float nearNeighbourSlope = 0.94 * 0.67 * cos(x * 0.67 + 0.26 + t * 0.007)
-                                 + 0.34 * 1.54 * cos(x * 1.54 + 1.20 - t * 0.012);
+        float nearNeighbourSlope = (0.94 + 0.13 * sin(t * 0.059 + 2.0)) * 0.67 * cos(x * 0.67 + 0.26 + 0.31 * sin(t * 0.041 + 1.4))
+                                 + 0.34 * 1.54 * cos(x * 1.54 + 1.20 + 0.32 * sin(t * 0.057 + 2.3));
         float farNeighbourSlope = 0.84 * 0.73 * cos(rearX * 0.73 + 0.96 - t * 0.004)
                                 + 0.28 * 1.87 * cos(rearX * 1.87 + 2.10 + t * 0.016);
         float nearNeighbourFootprint = abs(1.0 - dxDz * nearNeighbourSlope) * depthStep;
@@ -165,10 +165,10 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
 #else
         const float rearNeighbourDensity = 0.0;
 #endif
-        vec3 nearCycle = columnLifecycle(x, t, p.y - 2.64, 1.3, 0.12, 44.0, 0.68, 0.88);
+        vec3 nearCycle = columnLifecycle(x, t, p.y - 2.64, 1.3, 0.10, 56.0, 0.70, 0.92);
         vec3 farCycle = columnLifecycle(rearX, t, p.y - 2.64, 4.7, 0.02, 59.0, 0.76, 0.91);
         // Independent long lifetimes and starting phases allow varied overlaps.
-        vec3 nearNeighbourCycle = columnLifecycle(x + 0.33, t, p.y - 2.64, 2.1, 0.42, 51.0, 0.66, 0.86);
+        vec3 nearNeighbourCycle = columnLifecycle(x + 0.33, t, p.y - 2.64, 2.1, 0.60, 56.0, 0.64, 0.88);
         vec3 farNeighbourCycle = columnLifecycle(rearX - 0.27, t, p.y - 2.64, 5.6, 0.24, 67.0, 0.73, 0.93);
 #ifndef FAR_LAYER
         float nearPresence = nearCycle.x;

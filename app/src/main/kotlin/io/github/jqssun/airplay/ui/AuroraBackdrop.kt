@@ -126,6 +126,7 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private var farProgram = 0
     private var starProgram = 0
     private var compositeProgram = 0
+    private var farBrightnessUniform = -1
     private var screenWidth = 1
     private var screenHeight = 1
     private var cachedQuality: AuroraQuality? = null
@@ -183,6 +184,7 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             farProgram = link(volume.replace("#version 300 es", "#version 300 es\n#define FAR_LAYER"))
             starProgram = link(source(R.raw.aurora_stars))
             compositeProgram = link(source(R.raw.aurora_composite))
+            farBrightnessUniform = GL.glGetUniformLocation(compositeProgram,"uFarBrightness")
             val vbo = IntArray(1); GL.glGenBuffers(1, vbo, 0); GL.glBindBuffer(GL.GL_ARRAY_BUFFER, vbo[0])
             GL.glBufferData(GL.GL_ARRAY_BUFFER, 24, vertices, GL.GL_STATIC_DRAW)
             GL.glEnableVertexAttribArray(0); GL.glVertexAttribPointer(0, 2, GL.GL_FLOAT, false, 0, 0)
@@ -250,6 +252,9 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,0)
             GL.glViewport(0,0,screenWidth,screenHeight)
             GL.glUseProgram(compositeProgram)
+            // Cheap global opacity modulation of the cached far pair; no volume redraw.
+            val farBrightness = .84 + .10 * sin(time * .105) + .06 * sin(time * .061 + 1.3)
+            GL.glUniform1f(farBrightnessUniform, farBrightness.toFloat())
             for ((i,name) in arrayOf("uNear","uFar","uStars").withIndex()) {
                 GL.glActiveTexture(GL.GL_TEXTURE0+i); GL.glBindTexture(GL.GL_TEXTURE_2D,textures[i])
                 GL.glUniform1i(GL.glGetUniformLocation(compositeProgram,name),i)
