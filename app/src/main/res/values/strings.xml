@@ -241,4 +241,6 @@
     <string name="setting_aurora_beats">极光切换鼓点数</string>
     <string name="setting_aurora_beats_desc">累计多少个有效鼓点后提前交替出现，默认 16，可设 4–64；越小切换越快，最快间隔 8 秒。无鼓点时保留原周期，有鼓点时优先卡点，平滑交接。</string>
     <string name="aurora_quality_ultra_saver">极省电</string>
+    <string name="setting_record_rotation">唱片旋转</string>
+    <string name="setting_record_rotation_desc">播放时旋转唱片，两个主题均生效；关闭后停在当前角度，不影响频谱、歌词和背景动画。立即生效。</string>
 </resources>

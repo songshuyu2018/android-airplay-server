@@ -85,6 +85,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     val connections by viewModel.connectionCount.collectAsState()
     val audioOnly by viewModel.audioOnly.collectAsState()
     val reportedPlaying by viewModel.audioPlaying.collectAsState()
+    val rotationEnabled by viewModel.pref(Prefs.PLAYER_RECORD_ROTATION).collectAsState()
     val previewRequested by viewModel.pref(Prefs.PLAYER_THEME_PREVIEW).collectAsState()
     val auroraBeats by viewModel.pref(Prefs.PLAYER_AURORA_BEATS).collectAsState()
     val auroraFps by viewModel.pref(Prefs.PLAYER_AURORA_FPS).collectAsState()
@@ -144,8 +145,8 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     LaunchedEffect(controlsReady) { if (controlsReady) playFocus.requestFocusUntilLanded() }
     // Rotation only changes a hardware layer property. No FFT, allocation or layout
     // work is performed in its vsync callback; pausing retains the current angle.
-    LaunchedEffect(playing, lifecycle) {
-        if (playing) lifecycle?.repeatOnLifecycle(Lifecycle.State.STARTED) {
+    LaunchedEffect(playing, lifecycle, rotationEnabled) {
+        if (playing && rotationEnabled) lifecycle?.repeatOnLifecycle(Lifecycle.State.STARTED) {
             var previous = 0L
             while (isActive) withFrameNanos { now ->
                 if (previous != 0L) angle.floatValue =

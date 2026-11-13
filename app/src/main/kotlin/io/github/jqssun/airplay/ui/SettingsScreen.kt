@@ -44,6 +44,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
     val alacEnabled by viewModel.pref(Prefs.ALAC_ENABLED).collectAsState()
     val aacEnabled by viewModel.pref(Prefs.AAC_ENABLED).collectAsState()
     val resolution by viewModel.pref(Prefs.RESOLUTION).collectAsState()
+    val recordRotation by viewModel.pref(Prefs.PLAYER_RECORD_ROTATION).collectAsState()
     val themePreview by viewModel.pref(Prefs.PLAYER_THEME_PREVIEW).collectAsState()
     val auroraBeats by viewModel.pref(Prefs.PLAYER_AURORA_BEATS).collectAsState()
     val auroraFps by viewModel.pref(Prefs.PLAYER_AURORA_FPS).collectAsState()
@@ -201,6 +202,13 @@ fun SettingsScreen(viewModel: MainViewModel) {
         }
 
         SectionHeader(stringResource(R.string.section_display))
+
+        SettingSwitch(
+            title = stringResource(R.string.setting_record_rotation),
+            description = stringResource(R.string.setting_record_rotation_desc),
+            checked = recordRotation,
+            onCheckedChange = { viewModel.set(Prefs.PLAYER_RECORD_ROTATION, it) }
+        )
 
         SettingSwitch(
             title = stringResource(R.string.setting_player_aurora),

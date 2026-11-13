@@ -112,6 +112,7 @@ object Prefs {
     val ADVERTISE_VIDEO = bool("advertise_video", true, restart = true)
     val ADVERTISE_MIRRORING = bool("advertise_mirroring", true, restart = true)
     val ADVERTISE_AUDIO = bool("advertise_audio", true, restart = true)
+    val PLAYER_RECORD_ROTATION = bool("player_record_rotation", true)
     val PLAYER_THEME_PREVIEW = bool("player_theme_preview", true) // Temporary visual-only debug mode.
     val PLAYER_AURORA_BEATS = int("player_aurora_beats", 16, 4..64)
     val PLAYER_AURORA_FPS = int("player_aurora_fps", 20, 15..60) // Independent background rate.
