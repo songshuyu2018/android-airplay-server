@@ -238,4 +238,6 @@
     <string name="setting_aurora_fps">极光背景帧率上限</string>
     <string name="setting_aurora_fps_desc">独立于画质，立即生效。默认 20 fps；越高越连贯，也更耗电。仅控制背景刷新，不改变极光运动速度与前景动画；实际帧率取决于设备性能和屏幕刷新率。</string>
     <string name="aurora_fps_value">%1$d fps</string>
+    <string name="setting_aurora_beats">极光切换鼓点数</string>
+    <string name="setting_aurora_beats_desc">累计多少个有效鼓点后提前交替出现，默认 16，可设 4–64；越小切换越快，最快间隔 6 秒。无鼓点时保留原周期，有鼓点时优先卡点，平滑交接。</string>
 </resources>

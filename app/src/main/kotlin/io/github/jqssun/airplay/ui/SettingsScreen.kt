@@ -45,6 +45,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
     val aacEnabled by viewModel.pref(Prefs.AAC_ENABLED).collectAsState()
     val resolution by viewModel.pref(Prefs.RESOLUTION).collectAsState()
     val themePreview by viewModel.pref(Prefs.PLAYER_THEME_PREVIEW).collectAsState()
+    val auroraBeats by viewModel.pref(Prefs.PLAYER_AURORA_BEATS).collectAsState()
     val auroraFps by viewModel.pref(Prefs.PLAYER_AURORA_FPS).collectAsState()
     val auroraQuality by viewModel.pref(Prefs.PLAYER_AURORA_QUALITY).collectAsState()
     val playerAurora by viewModel.pref(Prefs.PLAYER_AURORA).collectAsState()
@@ -227,6 +228,14 @@ fun SettingsScreen(viewModel: MainViewModel) {
             value = auroraFps,
             options = AuroraFrameRate.options.map { it to stringResource(R.string.aurora_fps_value, it) },
             onValueChange = { viewModel.set(Prefs.PLAYER_AURORA_FPS, it) }
+        )
+
+        SettingTextField(
+            label = stringResource(R.string.setting_aurora_beats),
+            description = stringResource(R.string.setting_aurora_beats_desc),
+            value = auroraBeats.toString(),
+            onCommit = { viewModel.set(Prefs.PLAYER_AURORA_BEATS, it.toInt()) },
+            range = Prefs.PLAYER_AURORA_BEATS.range
         )
 
         SettingSwitch(

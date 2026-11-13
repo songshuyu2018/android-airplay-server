@@ -12,6 +12,8 @@ uniform float uIntensity;
 uniform float uMotion;
 uniform vec4 uShapeA;
 uniform vec4 uShapeB;
+uniform vec2 uBandAge;
+uniform vec2 uBandFade;
 out vec4 fragColor;
 
 float hash21(vec2 p) {
@@ -50,12 +52,26 @@ vec3 columnLifecycle(float x, float t, float height, float seed, float bandOffse
     // Overlapping lifetimes allow both neighbouring pairs to coexist.
     // A small local phase spread keeps the downward arrivals irregular.
     float clock = t / period + 0.012 * sin(t * 0.055 + seed);
+#ifdef FAR_LAYER
     float age = fract(clock + bandOffset + (phaseSeed - 0.5) * 0.085);
+#else
+    int band = bandOffset < 0.5 ? 0 : 1;
+    // Birth is scheduled on the beat; local delays never reveal a column early.
+    float age = clamp(uBandAge[band] - phaseSeed * 0.025, 0.0, 0.9999);
+#endif
+#ifdef FAR_LAYER
     float birth = smoothstep(0.0, 0.025, age);
     float downward = smoothstep(0.02, mix(0.12, 0.16, rateSeed), age);
+#else
+    float birth = smoothstep(0.0, 0.0125, age);
+    float downward = smoothstep(0.01, mix(0.06, 0.08, rateSeed), age);
+#endif
     float revealHeight = mix(1.50 + phaseSeed * 0.90, -0.48, downward);
     float reveal = smoothstep(revealHeight - 0.16, revealHeight + 0.16, height);
     float fade = 1.0 - smoothstep(holdEnd, fadeEnd, age);
+#ifndef FAR_LAYER
+    fade *= uBandFade[band];
+#endif
     float arrival = 1.0 - smoothstep(-0.25, 0.10, revealHeight);
     return vec3(birth * reveal * fade, arrival, rateSeed);
 }

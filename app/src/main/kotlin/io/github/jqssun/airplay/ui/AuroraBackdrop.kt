@@ -23,7 +23,7 @@ import kotlin.math.*
 /** Background only: no input, playback commands, JNI or foreground drawing. */
 @Composable
 internal fun AuroraBackdrop(playing: Boolean, energy: () -> Float, beat: () -> Float,
-    spectrum: () -> FloatArray, quality: Int, frameRate: Int, modifier: Modifier = Modifier, onFailure: () -> Unit) {
+    spectrum: () -> FloatArray, quality: Int, frameRate: Int, beatThreshold: Int, modifier: Modifier = Modifier, onFailure: () -> Unit) {
     val context = LocalContext.current
     val lifecycle = (context as? LifecycleOwner)?.lifecycle
     val latestEnergy by rememberUpdatedState(energy)
@@ -37,6 +37,7 @@ internal fun AuroraBackdrop(playing: Boolean, energy: () -> Float, beat: () -> F
     AndroidView(factory = { view }, modifier = modifier, update = {
         it.setQuality(AuroraQuality.fromSetting(quality))
         it.setFrameRate(frameRate)
+        it.renderer.beatThreshold = beatThreshold
     })
     DisposableEffect(view, lifecycle, playing) {
         view.input = { view.renderer.input(latestEnergy(), latestBeat(), latestSpectrum()) }
@@ -128,6 +129,9 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private var compositeProgram = 0
     private var farBrightnessUniform = -1
     private var starPulseUniform = -1
+    @Volatile var beatThreshold = 16
+    private val cycle = AuroraBeatCycle()
+    private val lifeUniforms = IntArray(2)
     private val shapes = FloatArray(8)
     private val shapeUniforms = IntArray(2)
     private var starPulse = 0f
@@ -197,6 +201,8 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             shapeUniforms[0] = GL.glGetUniformLocation(program,"uShapeA")
             shapeUniforms[1] = GL.glGetUniformLocation(program,"uShapeB")
             starPulseUniform = GL.glGetUniformLocation(compositeProgram,"uStarPulse")
+            lifeUniforms[0] = GL.glGetUniformLocation(program,"uBandAge")
+            lifeUniforms[1] = GL.glGetUniformLocation(program,"uBandFade")
             GL.glDisable(GL.GL_DEPTH_TEST); GL.glDisable(GL.GL_BLEND)
         } catch (e: Exception) { fail(e) }
     }
@@ -228,7 +234,9 @@ private class AuroraRenderer(private val context: Context, private val failure: 
         GL.glUniform1f(u[7],if (static) .34f else .85f)
         GL.glUniform1f(u[8],if (static) 0f else .75f)
         if (!static) {
-            AuroraMotion.writeShapes(time, shapes)
+            AuroraMotion.writeGenerations(cycle.generationA, cycle.generationB, shapes)
+            GL.glUniform2f(lifeUniforms[0],(cycle.ageA/56).toFloat(),(cycle.ageB/56).toFloat())
+            GL.glUniform2f(lifeUniforms[1],cycle.fadeA.toFloat(),cycle.fadeB.toFloat())
             GL.glUniform4fv(shapeUniforms[0],1,shapes,0)
             GL.glUniform4fv(shapeUniforms[1],1,shapes,4)
         }
@@ -255,7 +263,9 @@ private class AuroraRenderer(private val context: Context, private val failure: 
         try {
             synchronized(lock) { values.copyInto(snapshot) }
             val now = System.nanoTime()
-            if (running && previous != 0L) time += ((now-previous)/1e9).coerceIn(0.0,.1) * (1.0 + snapshot[0]*.75*.18 + snapshot[4]*.75*.12)
+            val elapsed = if (running && previous != 0L) ((now-previous)/1e9).coerceIn(0.0,.25) else 0.0
+            time += elapsed * 2.0
+            cycle.update(elapsed, snapshot[4], beatThreshold)
             previous = if (running) now else 0L
             val q = quality
             if (dirty || cachedQuality != q) rebuildLayers(q)
@@ -266,7 +276,7 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             GL.glViewport(0,0,screenWidth,screenHeight)
             GL.glUseProgram(compositeProgram)
             // Cheap global opacity modulation of the cached far pair; no volume redraw.
-            val farBrightness = .15 + 1.10 * (.5 + .5 * sin(time * .22))
+            val farBrightness = .15 + 1.10 * (.5 + .5 * sin((cycle.elapsedSeconds + 12.0) * .22))
             val dt = if (previousPulseTime == 0L) 0.0 else ((now-previousPulseTime)/1e9).coerceIn(0.0,.25)
             previousPulseTime = now
             val targetPulse = (snapshot[4] * .85f + snapshot[2] * .15f).coerceIn(0f,1f)
