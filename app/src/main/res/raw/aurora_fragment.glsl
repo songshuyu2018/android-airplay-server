@@ -16,6 +16,15 @@ uniform vec4 uShapeA;
 uniform vec4 uShapeB;
 uniform vec2 uBandAge;
 uniform vec2 uBandFade;
+#ifdef MATERIAL_LUT
+uniform highp sampler2D uGeometry;
+uniform float uGeometryExtent;
+vec4 geometryAt(float x) {
+    float index=clamp((x/uGeometryExtent*.5+.5)*float(textureSize(uGeometry,0).x-1),0.,float(textureSize(uGeometry,0).x-1));
+    int left=int(floor(index));
+    return mix(texelFetch(uGeometry,ivec2(left,0),0),texelFetch(uGeometry,ivec2(min(left+1,textureSize(uGeometry,0).x-1),0),0),fract(index));
+}
+#endif
 out vec4 fragColor;
 
 float hash21(vec2 p) {
@@ -122,17 +131,28 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
         float dxDz = slope.x + uDepthWind[i].y;
         float x = p.x + wind - nearDrift;
         float rearX = p.x + wind - farDrift;
+#ifdef MATERIAL_LUT
+        vec4 cachedGeometry=geometryAt(x);
+#endif
 
         // Broad folds and smaller eddies have incommensurate scales. The two
         // sheets share a field direction, while their waves evolve separately.
         float largeFold = noise21(vec2(x * 0.80, t * 0.030));
+#ifdef MATERIAL_LUT
+        float front = cachedGeometry.x;
+#else
         float front = 3.20 + (uShapeA.x + 0.16 * sin(t * 0.071)) * sin(x * uShapeA.y + uShapeA.z + 0.28 * sin(t * 0.047))
                            + 0.46 * sin(x * (uShapeA.y * 2.64) + uShapeA.w + 0.36 * sin(t * 0.063 + 1.2))
                            + 0.40 * (largeFold - 0.5);
+#endif
         float rear = 5.30 + 1.10 * sin(rearX * 0.58 + 1.30 + t * 0.004)
                           + 0.40 * sin(rearX * 2.30 - t * 0.012);
+#ifdef MATERIAL_LUT
+        float frontSlope = cachedGeometry.y;
+#else
         float frontSlope = (uShapeA.x + 0.16 * sin(t * 0.071)) * uShapeA.y * cos(x * uShapeA.y + uShapeA.z + 0.28 * sin(t * 0.047))
                          + 0.46 * (uShapeA.y * 2.64) * cos(x * (uShapeA.y * 2.64) + uShapeA.w + 0.36 * sin(t * 0.063 + 1.2));
+#endif
         float rearSlope = 1.10 * 0.58 * cos(rearX * 0.58 + 1.30 + t * 0.004)
                         + 0.40 * 2.30 * cos(rearX * 2.30 - t * 0.012);
         float frontFootprint = abs(1.0 - dxDz * frontSlope) * depthStep;
@@ -141,14 +161,22 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
         float rearWidth = sqrt(0.25 * 0.25 + rearFootprint * rearFootprint / 6.0);
         // Each original sheet gets a neighbouring, softly corrugated companion.
         // The separations vary gently, so nearby sheets can merge and part.
+#ifdef MATERIAL_LUT
+        float frontNeighbour = cachedGeometry.z;
+#else
         float frontNeighbour = 3.98 + (uShapeB.x + 0.13 * sin(t * 0.059 + 2.0)) * sin(x * uShapeB.y + uShapeB.z + 0.31 * sin(t * 0.041 + 1.4))
                              + 0.34 * sin(x * (uShapeB.y * 2.30) + uShapeB.w + 0.32 * sin(t * 0.057 + 2.3))
                              + 0.24 * (noise21(vec2(x * 0.67 + 5.4, t * 0.022 + 7.0)) - 0.5);
+#endif
         float rearNeighbour = 6.20 + 0.84 * sin(rearX * 0.73 + 0.96 - t * 0.004)
                             + 0.28 * sin(rearX * 1.87 + 2.10 + t * 0.016)
                             + 0.23 * (noise21(vec2(rearX * 0.91 + 9.2, t * 0.019 + 3.0)) - 0.5);
+#ifdef MATERIAL_LUT
+        float nearNeighbourSlope = cachedGeometry.w;
+#else
         float nearNeighbourSlope = (uShapeB.x + 0.13 * sin(t * 0.059 + 2.0)) * uShapeB.y * cos(x * uShapeB.y + uShapeB.z + 0.31 * sin(t * 0.041 + 1.4))
                                  + 0.34 * (uShapeB.y * 2.30) * cos(x * (uShapeB.y * 2.30) + uShapeB.w + 0.32 * sin(t * 0.057 + 2.3));
+#endif
         float farNeighbourSlope = 0.84 * 0.73 * cos(rearX * 0.73 + 0.96 - t * 0.004)
                                 + 0.28 * 1.87 * cos(rearX * 1.87 + 2.10 + t * 0.016);
         float nearNeighbourFootprint = abs(1.0 - dxDz * nearNeighbourSlope) * depthStep;

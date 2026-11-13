@@ -23,7 +23,7 @@ import kotlin.math.*
 /** Background only: no input, playback commands, JNI or foreground drawing. */
 @Composable
 internal fun AuroraBackdrop(playing: Boolean, energy: () -> Float, beat: () -> Float,
-    spectrum: () -> FloatArray, quality: Int, frameRate: Int, sampleCount: Int, beatThreshold: Int, modifier: Modifier = Modifier, onFailure: () -> Unit) {
+    spectrum: () -> FloatArray, quality: Int, frameRate: Int, sampleCount: Int, materialCache: Boolean, beatThreshold: Int, modifier: Modifier = Modifier, onFailure: () -> Unit) {
     val context = LocalContext.current
     val lifecycle = (context as? LifecycleOwner)?.lifecycle
     val latestEnergy by rememberUpdatedState(energy)
@@ -39,6 +39,7 @@ internal fun AuroraBackdrop(playing: Boolean, energy: () -> Float, beat: () -> F
         it.setFrameRate(frameRate)
         it.renderer.beatThreshold = beatThreshold
         it.renderer.sampleCount = AuroraSampling.normalize(sampleCount)
+        it.renderer.materialEnabled = materialCache
     })
     DisposableEffect(view, lifecycle, playing) {
         view.input = { view.renderer.input(latestEnergy(), latestBeat(), latestSpectrum()) }
@@ -127,8 +128,10 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private var farProgram = 0
     private var starProgram = 0
     private var compositeProgram = 0
-    @Volatile var sampleCount = 48
-    private var frameSamples = 48
+    @Volatile var materialEnabled = true
+    private var material: AuroraMaterialCache? = null
+    @Volatile var sampleCount = 96
+    private var frameSamples = 96
     private var cachedSamples = 0
     private val sampleUniforms = IntArray(2)
     private val depthWind = FloatArray(192)
@@ -192,7 +195,7 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private fun source(id: Int) = context.resources.openRawResource(id).bufferedReader().use { it.readText() }
     override fun onSurfaceCreated(unused: GL10?, config: EGLConfig?) {
         program = 0; previous = 0; dirty = true; cachedQuality = null
-        textures.fill(0); framebuffers.fill(0)
+        textures.fill(0); framebuffers.fill(0); material = null
         GL.glClearColor(0f, 0f, 0f, 1f)
         try {
             val volume = source(R.raw.aurora_fragment)
@@ -219,6 +222,7 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             lifeUniforms[0] = GL.glGetUniformLocation(program,"uBandAge")
             lifeUniforms[1] = GL.glGetUniformLocation(program,"uBandFade")
             GL.glDisable(GL.GL_DEPTH_TEST); GL.glDisable(GL.GL_BLEND)
+            material = AuroraMaterialCache.create(volume,source(R.raw.aurora_material),::link)
         } catch (e: Exception) { fail(e) }
     }
     private fun locations(p: Int) = arrayOf("uResolution","uTime","uBass","uMid","uHigh","uEnergy","uBeat","uIntensity","uMotion")
@@ -242,22 +246,23 @@ private class AuroraRenderer(private val context: Context, private val failure: 
         check(GL.glCheckFramebufferStatus(GL.GL_FRAMEBUFFER) == GL.GL_FRAMEBUFFER_COMPLETE) { "Incomplete aurora layer" }
     }
     private fun volume(p: Int, u: IntArray, static: Boolean) {
+        val cache = material?.takeIf { it.volumeProgram == p }
         GL.glUseProgram(p)
         GL.glUniform2f(u[0],bufferWidth.toFloat(),bufferHeight.toFloat())
         val shaderTime = if (static) 12f else time.toFloat()
         GL.glUniform1f(u[1],shaderTime)
         AuroraDepthWind.write(shaderTime,depthWind,frameSamples)
-        GL.glUniform1i(sampleUniforms[if (static) 1 else 0],frameSamples)
-        GL.glUniform2fv(depthWindUniforms[if (static) 1 else 0],frameSamples,depthWind,0)
+        GL.glUniform1i(cache?.sampleUniform ?: sampleUniforms[if (static) 1 else 0],frameSamples)
+        GL.glUniform2fv(cache?.windUniform ?: depthWindUniforms[if (static) 1 else 0],frameSamples,depthWind,0)
         for (i in 0..4) GL.glUniform1f(u[i+2],if (static) 0f else snapshot[i])
         GL.glUniform1f(u[7],if (static) .34f else .85f)
         GL.glUniform1f(u[8],if (static) 0f else .75f)
         if (!static) {
             AuroraMotion.writeGenerations(cycle.generationA, cycle.generationB, shapes)
-            GL.glUniform2f(lifeUniforms[0],(cycle.ageA/56).toFloat(),(cycle.ageB/56).toFloat())
-            GL.glUniform2f(lifeUniforms[1],cycle.fadeA.toFloat(),cycle.fadeB.toFloat())
-            GL.glUniform4fv(shapeUniforms[0],1,shapes,0)
-            GL.glUniform4fv(shapeUniforms[1],1,shapes,4)
+            GL.glUniform2f(cache?.lifeUniforms?.get(0) ?: lifeUniforms[0],(cycle.ageA/56).toFloat(),(cycle.ageB/56).toFloat())
+            GL.glUniform2f(cache?.lifeUniforms?.get(1) ?: lifeUniforms[1],cycle.fadeA.toFloat(),cycle.fadeB.toFloat())
+            GL.glUniform4fv(cache?.shapeUniforms?.get(0) ?: shapeUniforms[0],1,shapes,0)
+            GL.glUniform4fv(cache?.shapeUniforms?.get(1) ?: shapeUniforms[1],1,shapes,4)
         }
         GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
     }
@@ -289,9 +294,20 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             val q = quality
             frameSamples = AuroraSampling.normalize(sampleCount)
             if (dirty || cachedQuality != q || cachedSamples != frameSamples) rebuildLayers(q)
+            var cache = if (materialEnabled) material else null
+            if (cache != null) {
+                try {
+                    AuroraMotion.writeGenerations(cycle.generationA,cycle.generationB,shapes)
+                    cache.prepare(time.toFloat(),shapes,bufferWidth.toFloat()/bufferHeight)
+                } catch (e: Exception) {
+                    Log.w("Aurora","Material cache failed; using reference renderer",e)
+                    cache.release(); material=null; cache=null
+                }
+            }
             GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,framebuffers[0])
             GL.glViewport(0,0,bufferWidth,bufferHeight)
-            volume(program,uniforms,false)
+            if (cache != null) volume(cache.volumeProgram,cache.uniforms,false)
+            else volume(program,uniforms,false)
             GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,0)
             GL.glViewport(0,0,screenWidth,screenHeight)
             GL.glUseProgram(compositeProgram)

@@ -47,6 +47,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
     val recordRotation by viewModel.pref(Prefs.PLAYER_RECORD_ROTATION).collectAsState()
     val themePreview by viewModel.pref(Prefs.PLAYER_THEME_PREVIEW).collectAsState()
     val auroraBeats by viewModel.pref(Prefs.PLAYER_AURORA_BEATS).collectAsState()
+    val materialCache by viewModel.pref(Prefs.PLAYER_AURORA_MATERIAL_CACHE).collectAsState()
     val auroraSamples by viewModel.pref(Prefs.PLAYER_AURORA_SAMPLES).collectAsState()
     val auroraFps by viewModel.pref(Prefs.PLAYER_AURORA_FPS).collectAsState()
     val auroraQuality by viewModel.pref(Prefs.PLAYER_AURORA_QUALITY).collectAsState()
@@ -230,6 +231,13 @@ fun SettingsScreen(viewModel: MainViewModel) {
                 "3" to stringResource(R.string.aurora_quality_high),
             ),
             onValueChange = { viewModel.set(Prefs.PLAYER_AURORA_QUALITY, it.toInt()) }
+        )
+
+        SettingSwitch(
+            title = stringResource(R.string.setting_aurora_material_cache),
+            description = stringResource(R.string.setting_aurora_material_cache_desc),
+            checked = materialCache,
+            onCheckedChange = { viewModel.set(Prefs.PLAYER_AURORA_MATERIAL_CACHE, it) }
         )
 
         SettingSegmented(

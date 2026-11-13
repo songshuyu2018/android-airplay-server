@@ -244,5 +244,7 @@
     <string name="setting_record_rotation">唱片旋转</string>
     <string name="setting_record_rotation_desc">播放时旋转唱片，两个主题均生效；关闭后停在当前角度，不影响频谱、歌词和背景动画。立即生效。</string>
     <string name="setting_aurora_samples">极光采样质量</string>
-    <string name="setting_aurora_samples_desc">每个像素的体积采样次数，与分辨率、帧率独立。调试默认 48，越高越细腻、计算量越大；切换后立即生效。</string>
+    <string name="setting_aurora_samples_desc">每个像素的体积采样次数，与分辨率、帧率独立。默认 96，越高越细腻、计算量越大；切换后立即生效。</string>
+    <string name="setting_aurora_material_cache">极光材质预计算（实验）</string>
+    <string name="setting_aurora_material_cache_desc">缓存褶皱形态，减少重复计算；建议使用 96 次采样对比。关闭使用原算法，不支持的设备自动回退。保留已选择的采样次数。</string>
 </resources>
