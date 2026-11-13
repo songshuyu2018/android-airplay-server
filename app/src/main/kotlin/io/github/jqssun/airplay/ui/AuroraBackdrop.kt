@@ -55,7 +55,7 @@ private class AuroraView(context: Context, failure: () -> Unit) : GLSurfaceView(
     var input: (() -> Unit)? = null
     private var active = false
     private var suspended = false
-    private var lastRequest = 0L
+    private val pacer = AuroraFramePacer()
     private var quality = AuroraQuality.SMOOTH
     private var frameIntervalNanos = AuroraFrameRate.intervalNanos(20)
     init {
@@ -81,7 +81,7 @@ private class AuroraView(context: Context, failure: () -> Unit) : GLSurfaceView(
     fun setQuality(value: AuroraQuality) {
         if (quality == value) return
         quality = value
-        lastRequest = 0L
+        pacer.reset()
         resizeBackground(width, height)
         // Keep the GL context and animation clock when switching quality.
     }
@@ -89,7 +89,7 @@ private class AuroraView(context: Context, failure: () -> Unit) : GLSurfaceView(
         val interval = AuroraFrameRate.intervalNanos(value)
         if (frameIntervalNanos == interval) return
         frameIntervalNanos = interval
-        lastRequest = 0L
+        pacer.reset()
     }
     fun setActive(value: Boolean) {
         if (active == value && suspended == !value) return
@@ -98,15 +98,14 @@ private class AuroraView(context: Context, failure: () -> Unit) : GLSurfaceView(
         renderer.running = value
         renderer.resetClock()
         Choreographer.getInstance().removeFrameCallback(this)
-        if (value) { onResume(); lastRequest = 0; Choreographer.getInstance().postFrameCallback(this) }
+        if (value) { onResume(); pacer.reset(); Choreographer.getInstance().postFrameCallback(this) }
         else onPause()
     }
     override fun doFrame(now: Long) {
         if (!active) return
-        if (lastRequest == 0L || now - lastRequest >= frameIntervalNanos - 1_000_000L) {
+        if (pacer.shouldRender(now, frameIntervalNanos)) {
             input?.invoke()
             requestRender()
-            lastRequest = now
         }
         Choreographer.getInstance().postFrameCallback(this)
     }
