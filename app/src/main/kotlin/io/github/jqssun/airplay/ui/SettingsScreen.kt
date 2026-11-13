@@ -209,17 +209,18 @@ fun SettingsScreen(viewModel: MainViewModel) {
             onCheckedChange = { viewModel.set(Prefs.PLAYER_AURORA, it) }
         )
 
-        SettingSegmented(
+        SettingChips(
             title = stringResource(R.string.setting_aurora_quality),
-            summary = stringResource(R.string.setting_aurora_quality_desc),
-            value = auroraQuality,
+            description = stringResource(R.string.setting_aurora_quality_desc),
+            value = auroraQuality.toString(),
             options = listOf(
-                0 to stringResource(R.string.aurora_quality_saver),
-                1 to stringResource(R.string.aurora_quality_smooth),
-                2 to stringResource(R.string.aurora_quality_balanced),
-                3 to stringResource(R.string.aurora_quality_high),
+                "4" to stringResource(R.string.aurora_quality_ultra_saver),
+                "0" to stringResource(R.string.aurora_quality_saver),
+                "1" to stringResource(R.string.aurora_quality_smooth),
+                "2" to stringResource(R.string.aurora_quality_balanced),
+                "3" to stringResource(R.string.aurora_quality_high),
             ),
-            onValueChange = { viewModel.set(Prefs.PLAYER_AURORA_QUALITY, it) }
+            onValueChange = { viewModel.set(Prefs.PLAYER_AURORA_QUALITY, it.toInt()) }
         )
 
         SettingSegmented(

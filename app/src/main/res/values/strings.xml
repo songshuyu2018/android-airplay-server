@@ -230,7 +230,7 @@
     <string name="setting_player_theme_preview">主题演示（模拟播放）</string>
     <string name="setting_player_theme_preview_desc">无设备连接时模拟播放与频谱，用于验证极光主题；不播放声音，不发送反控命令。连接真实设备后自动使用真实状态。</string>
     <string name="setting_aurora_quality">极光背景画质</string>
-    <string name="setting_aurora_quality_desc">仅控制背景分辨率，帧率单独设置。省电更轻，流畅适合手机，均衡更细腻，高清保留原清晰度；立即生效。</string>
+    <string name="setting_aurora_quality_desc">仅控制极光分辨率，帧率单独设置。极省电比省电更轻、极光更柔和；星星和前景保持清晰。立即生效。</string>
     <string name="aurora_quality_saver">省电</string>
     <string name="aurora_quality_smooth">流畅</string>
     <string name="aurora_quality_balanced">均衡</string>
@@ -240,4 +240,5 @@
     <string name="aurora_fps_value">%1$d fps</string>
     <string name="setting_aurora_beats">极光切换鼓点数</string>
     <string name="setting_aurora_beats_desc">累计多少个有效鼓点后提前交替出现，默认 16，可设 4–64；越小切换越快，最快间隔 8 秒。无鼓点时保留原周期，有鼓点时优先卡点，平滑交接。</string>
+    <string name="aurora_quality_ultra_saver">极省电</string>
 </resources>

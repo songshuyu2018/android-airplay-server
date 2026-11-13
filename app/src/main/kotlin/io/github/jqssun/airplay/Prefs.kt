@@ -115,7 +115,7 @@ object Prefs {
     val PLAYER_THEME_PREVIEW = bool("player_theme_preview", true) // Temporary visual-only debug mode.
     val PLAYER_AURORA_BEATS = int("player_aurora_beats", 16, 4..64)
     val PLAYER_AURORA_FPS = int("player_aurora_fps", 20, 15..60) // Independent background rate.
-    val PLAYER_AURORA_QUALITY = int("player_aurora_quality", 1, 0..3) // Background only; smooth default.
+    val PLAYER_AURORA_QUALITY = int("player_aurora_quality", 1, 0..4) // Background only; smooth default.
     val PLAYER_AURORA = bool("player_aurora", true) // Debug rollout default; explicit user choice persists.
     val PLAYER_LIGHT_TUNING = bool("player_light_tuning", false)
     val AUDIO_IDLE_RETURN_HOME = bool("audio_idle_return_home", true)
