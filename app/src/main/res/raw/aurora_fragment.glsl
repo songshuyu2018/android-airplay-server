@@ -58,6 +58,16 @@ float starField(vec2 p, float scale, float seed) {
 // Return visibility, arrival at the lower edge, and a stable column seed.
 vec3 columnLifecycle(float x, float t, float height, float seed, float bandOffset,
                      float period, float holdEnd, float fadeEnd) {
+#ifndef FAR_LAYER
+    int nearBand = bandOffset < 0.5 ? 0 : 1;
+    float baseAge = uBandAge[nearBand];
+    if (uBandFade[nearBand] <= 0.0 || baseAge <= 0.0 || baseAge >= fadeEnd + 0.025) return vec3(0.0);
+    // After full arrival and before fade, phase noise cannot change visibility.
+    if (baseAge >= 0.106 && baseAge <= holdEnd) {
+        float rate = noise21(vec2(x * 0.51 + seed * 4.3, seed * 6.1));
+        return vec3(uBandFade[nearBand] * smoothstep(-0.64, -0.32, height), 1.0, rate);
+    }
+#endif
     float phaseSeed = noise21(vec2(x * 0.72 + seed * 7.1, seed * 3.7));
     float rateSeed = noise21(vec2(x * 0.51 + seed * 4.3, seed * 6.1));
     // Overlapping lifetimes allow both neighbouring pairs to coexist.
@@ -193,23 +203,27 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
 #else
         if (min(abs(df),abs(dfn)) > 8.0) continue;
 #endif
+        float frontHaloKernel = exp(-df * df * 0.20);
+        float rearHaloKernel = exp(-dr * dr * 0.20);
+        float nearNeighbourHaloKernel = exp(-dfn * dfn * 0.20);
+        float farNeighbourHaloKernel = exp(-drn * drn * 0.20);
 #ifndef FAR_LAYER
-        float frontDensity = exp(-df * df) * (0.20 / frontWidth) * 0.90;
+        float frontDensity = (frontHaloKernel * frontHaloKernel * frontHaloKernel * frontHaloKernel * frontHaloKernel) * (0.20 / frontWidth) * 0.90;
 #else
         const float frontDensity = 0.0;
 #endif
 #ifdef FAR_LAYER
-        float rearDensity = exp(-dr * dr) * (0.25 / rearWidth) * 0.78 * 0.90;
+        float rearDensity = (rearHaloKernel * rearHaloKernel * rearHaloKernel * rearHaloKernel * rearHaloKernel) * (0.25 / rearWidth) * 0.78 * 0.90;
 #else
         const float rearDensity = 0.0;
 #endif
 #ifndef FAR_LAYER
-        float frontNeighbourDensity = exp(-dfn * dfn) * (0.20 / nearNeighbourWidth) * 0.58;
+        float frontNeighbourDensity = (nearNeighbourHaloKernel * nearNeighbourHaloKernel * nearNeighbourHaloKernel * nearNeighbourHaloKernel * nearNeighbourHaloKernel) * (0.20 / nearNeighbourWidth) * 0.58;
 #else
         const float frontNeighbourDensity = 0.0;
 #endif
 #ifdef FAR_LAYER
-        float rearNeighbourDensity = exp(-drn * drn) * (0.25 / farNeighbourWidth) * 0.78 * 0.58;
+        float rearNeighbourDensity = (farNeighbourHaloKernel * farNeighbourHaloKernel * farNeighbourHaloKernel * farNeighbourHaloKernel * farNeighbourHaloKernel) * (0.25 / farNeighbourWidth) * 0.78 * 0.58;
 #else
         const float rearNeighbourDensity = 0.0;
 #endif
@@ -258,10 +272,10 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
                                    z * 0.12 + 2.64 * 0.07 + t * 0.017));
         float base = 2.64 + (grain - 0.5) * 0.055;
         float height = p.y - base;
-        float haloDensity = exp(-df * df * 0.20) * (0.20 / frontWidth) * nearPresence * 0.90
-                          + exp(-dr * dr * 0.20) * (0.25 / rearWidth) * 0.65 * farPresence * 0.90
-                          + exp(-dfn * dfn * 0.20) * (0.20 / nearNeighbourWidth) * nearNeighbourPresence * 0.58
-                          + exp(-drn * drn * 0.20) * (0.25 / farNeighbourWidth) * 0.65 * farNeighbourPresence * 0.58;
+        float haloDensity = frontHaloKernel * (0.20 / frontWidth) * nearPresence * 0.90
+                          + rearHaloKernel * (0.25 / rearWidth) * 0.65 * farPresence * 0.90
+                          + nearNeighbourHaloKernel * (0.20 / nearNeighbourWidth) * nearNeighbourPresence * 0.58
+                          + farNeighbourHaloKernel * (0.25 / farNeighbourWidth) * 0.65 * farNeighbourPresence * 0.58;
         float halo = exp(-abs(height - 0.08) * 3.2) * haloDensity * 0.052;
         // Halo-only samples do not need fibre noise, packets or palette mixing.
         // The omitted body contribution is bounded and checked by pixel QA.
