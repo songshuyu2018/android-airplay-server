@@ -127,6 +127,9 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private var farProgram = 0
     private var starProgram = 0
     private var compositeProgram = 0
+    private val depthWind = FloatArray(192)
+    private val depthWindUniforms = IntArray(2)
+    private val compositeUniforms = IntArray(4)
     private var farBrightnessUniform = -1
     private var starPulseUniform = -1
     @Volatile var beatThreshold = 16
@@ -194,6 +197,12 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             starProgram = link(source(R.raw.aurora_stars))
             compositeProgram = link(source(R.raw.aurora_composite))
             farBrightnessUniform = GL.glGetUniformLocation(compositeProgram,"uFarBrightness")
+            depthWindUniforms[0] = GL.glGetUniformLocation(program,"uDepthWind[0]")
+            depthWindUniforms[1] = GL.glGetUniformLocation(farProgram,"uDepthWind[0]")
+            for ((i,name) in arrayOf("uNear","uFar","uStars","uResolution").withIndex())
+                compositeUniforms[i] = GL.glGetUniformLocation(compositeProgram,name)
+            GL.glUseProgram(compositeProgram)
+            for (i in 0..2) GL.glUniform1i(compositeUniforms[i],i)
             val vbo = IntArray(1); GL.glGenBuffers(1, vbo, 0); GL.glBindBuffer(GL.GL_ARRAY_BUFFER, vbo[0])
             GL.glBufferData(GL.GL_ARRAY_BUFFER, 24, vertices, GL.GL_STATIC_DRAW)
             GL.glEnableVertexAttribArray(0); GL.glVertexAttribPointer(0, 2, GL.GL_FLOAT, false, 0, 0)
@@ -229,7 +238,10 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private fun volume(p: Int, u: IntArray, static: Boolean) {
         GL.glUseProgram(p)
         GL.glUniform2f(u[0],bufferWidth.toFloat(),bufferHeight.toFloat())
-        GL.glUniform1f(u[1],if (static) 12f else time.toFloat())
+        val shaderTime = if (static) 12f else time.toFloat()
+        GL.glUniform1f(u[1],shaderTime)
+        AuroraDepthWind.write(shaderTime,depthWind)
+        GL.glUniform2fv(depthWindUniforms[if (static) 1 else 0],96,depthWind,0)
         for (i in 0..4) GL.glUniform1f(u[i+2],if (static) 0f else snapshot[i])
         GL.glUniform1f(u[7],if (static) .34f else .85f)
         GL.glUniform1f(u[8],if (static) 0f else .75f)
@@ -284,11 +296,10 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             starPulse += (targetPulse-starPulse) * response.toFloat()
             GL.glUniform1f(starPulseUniform,starPulse)
             GL.glUniform1f(farBrightnessUniform, farBrightness.toFloat())
-            for ((i,name) in arrayOf("uNear","uFar","uStars").withIndex()) {
+            for (i in 0..2) {
                 GL.glActiveTexture(GL.GL_TEXTURE0+i); GL.glBindTexture(GL.GL_TEXTURE_2D,textures[i])
-                GL.glUniform1i(GL.glGetUniformLocation(compositeProgram,name),i)
             }
-            GL.glUniform2f(GL.glGetUniformLocation(compositeProgram,"uResolution"),screenWidth.toFloat(),screenHeight.toFloat())
+            GL.glUniform2f(compositeUniforms[3],screenWidth.toFloat(),screenHeight.toFloat())
             GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
         } catch (e: Exception) { GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,0); fail(e) }
     }

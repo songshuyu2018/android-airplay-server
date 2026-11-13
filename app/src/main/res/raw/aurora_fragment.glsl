@@ -10,6 +10,7 @@ uniform float uEnergy;
 uniform float uBeat;
 uniform float uIntensity;
 uniform float uMotion;
+uniform vec2 uDepthWind[96];
 uniform vec4 uShapeA;
 uniform vec4 uShapeB;
 uniform vec2 uBandAge;
@@ -113,11 +114,9 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
         if (p.y <= 2.0) continue;
         // Freeze lateral wind at the luminous base: XZ folds still move,
         // but individual rays stay straight in world space as they rise.
-        float windPhaseA = 2.64 * 0.65 + z * 0.32 + t * 0.060;
-        float windPhaseB = 2.64 * 1.10 - z * 0.47 + t * 0.039;
-        float wind = 0.25 * sin(windPhaseA) + 0.065 * sin(windPhaseB);
-        float dxDz = slope.x + 0.25 * 0.32 * cos(windPhaseA)
-                            - 0.065 * 0.47 * cos(windPhaseB);
+        // Shared by every pixel: computed once per depth sample on the CPU.
+        float wind = uDepthWind[i].x;
+        float dxDz = slope.x + uDepthWind[i].y;
         float x = p.x + wind - nearDrift;
         float rearX = p.x + wind - farDrift;
 
@@ -208,6 +207,8 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
 #else
         const float farNeighbourPresence = 0.0;
 #endif
+        // Exactly zero emission: avoid all remaining fibre and halo work.
+        if (nearPresence + farPresence + nearNeighbourPresence + farNeighbourPresence == 0.0) continue;
         vec4 visible = vec4(frontDensity * nearPresence, rearDensity * farPresence,
                             frontNeighbourDensity * nearNeighbourPresence,
                             rearNeighbourDensity * farNeighbourPresence);
@@ -224,9 +225,6 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
 
         float grain = noise21(vec2(fibreX * 16.0 - t * 0.180,
                                    z * 0.12 + 2.64 * 0.07 + t * 0.017));
-        float silk = noise21(vec2(fibreX * 51.0 - t * 0.320,
-                                  2.64 * 0.15 + t * 0.022));
-        float rays = (0.15 + 0.85 * grain) * (0.50 + 0.50 * silk);
         float base = 2.64 + (grain - 0.5) * 0.055;
         float height = p.y - base;
         float haloDensity = exp(-df * df * 0.20) * (0.20 / frontWidth) * nearPresence * 0.90
@@ -240,6 +238,9 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
             sum += vec3(0.11, 1.00, 0.51) * halo * 0.275 * (55.0 / 95.0);
             continue;
         }
+        float silk = noise21(vec2(fibreX * 51.0 - t * 0.320,
+                                  2.64 * 0.15 + t * 0.022));
+        float rays = (0.15 + 0.85 * grain) * (0.50 + 0.50 * silk);
         float lengthField = noise21(vec2(fibreX * 2.80, z * 0.20 + t * 0.015));
         float rayLength = 0.90 + lengthField * 0.46;
         // A soft packet travels from high atmosphere down each straight ray:
