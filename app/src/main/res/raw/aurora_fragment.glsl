@@ -11,6 +11,7 @@ uniform float uBeat;
 uniform float uIntensity;
 uniform float uMotion;
 uniform vec2 uDepthWind[96];
+uniform int uSampleCount;
 uniform vec4 uShapeA;
 uniform vec4 uShapeB;
 uniform vec2 uBandAge;
@@ -103,10 +104,12 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
                    + 0.18 * (sin(t * 0.031 + 1.30) - sin(1.30))
                    + 0.028 * (sin(t * 0.13 + 0.8) - sin(0.8));
 
-    // Keep the approved soft volume integral, with 96 normalized samples.
+    // Match depth spacing, footprint filtering and integral weight to the selected sample count.
     // A footprint-aware Gaussian avoids visible fixed-depth slice replicas.
-    const float depthStep = 7.8 / 95.0;
+    float intervals = float(clamp(uSampleCount, 48, 96) - 1);
+    float depthStep = 7.8 / intervals;
     for (int i = 0; i < 96; ++i) {
+        if (i >= uSampleCount) break;
         float z = 1.0 + float(i) * depthStep;
         vec3 p = vec3(slope * z, z);
         // All four lifecycle reveal masks are exactly zero below height -0.64.
@@ -235,7 +238,7 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
         // Halo-only samples do not need fibre noise, packets or palette mixing.
         // The omitted body contribution is bounded and checked by pixel QA.
         if (density < 0.000001) {
-            sum += vec3(0.11, 1.00, 0.51) * halo * 0.275 * (55.0 / 95.0);
+            sum += vec3(0.11, 1.00, 0.51) * halo * 0.275 * (55.0 / intervals);
             continue;
         }
         float silk = noise21(vec2(fibreX * 51.0 - t * 0.320,
@@ -285,7 +288,7 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
         // The wider density kernel integrates a faint optical halo around
         // the bright folds. It is geometrically aligned, never a flat panel.
 
-        sum += (light * density * musical + green * halo) * 0.275 * (55.0 / 95.0);
+        sum += (light * density * musical + green * halo) * 0.275 * (55.0 / intervals);
     }
     return sum;
 }

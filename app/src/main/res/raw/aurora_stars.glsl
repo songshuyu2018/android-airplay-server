@@ -22,7 +22,7 @@ float starField(vec2 p, float scale, float seed) {
     vec2 jitter = vec2(hash21(cell + seed), hash21(cell + seed + 12.7));
     float chosen = hash21(cell + 53.3 + seed);
     vec2 delta = fract(grid) - (0.18 + jitter * 0.64);
-    float radius = mix(0.025, 0.070, pow(chosen, 11.0));
+    float radius = mix(0.025, 0.070, pow(chosen, 11.0)) * 1.30;
     float point = exp(-dot(delta, delta) / (radius * radius));
     float twinkle = 0.86 + 0.14 * sin(12.0 * (0.24 + chosen * 0.3) + seed + chosen * 91.0);
     return point * step(0.973, chosen) * mix(0.28, 0.92, jitter.x) * twinkle;

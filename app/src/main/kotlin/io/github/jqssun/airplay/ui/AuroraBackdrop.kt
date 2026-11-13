@@ -23,7 +23,7 @@ import kotlin.math.*
 /** Background only: no input, playback commands, JNI or foreground drawing. */
 @Composable
 internal fun AuroraBackdrop(playing: Boolean, energy: () -> Float, beat: () -> Float,
-    spectrum: () -> FloatArray, quality: Int, frameRate: Int, beatThreshold: Int, modifier: Modifier = Modifier, onFailure: () -> Unit) {
+    spectrum: () -> FloatArray, quality: Int, frameRate: Int, sampleCount: Int, beatThreshold: Int, modifier: Modifier = Modifier, onFailure: () -> Unit) {
     val context = LocalContext.current
     val lifecycle = (context as? LifecycleOwner)?.lifecycle
     val latestEnergy by rememberUpdatedState(energy)
@@ -38,6 +38,7 @@ internal fun AuroraBackdrop(playing: Boolean, energy: () -> Float, beat: () -> F
         it.setQuality(AuroraQuality.fromSetting(quality))
         it.setFrameRate(frameRate)
         it.renderer.beatThreshold = beatThreshold
+        it.renderer.sampleCount = AuroraSampling.normalize(sampleCount)
     })
     DisposableEffect(view, lifecycle, playing) {
         view.input = { view.renderer.input(latestEnergy(), latestBeat(), latestSpectrum()) }
@@ -126,6 +127,10 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private var farProgram = 0
     private var starProgram = 0
     private var compositeProgram = 0
+    @Volatile var sampleCount = 48
+    private var frameSamples = 48
+    private var cachedSamples = 0
+    private val sampleUniforms = IntArray(2)
     private val depthWind = FloatArray(192)
     private val depthWindUniforms = IntArray(2)
     private val compositeUniforms = IntArray(4)
@@ -196,6 +201,8 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             starProgram = link(source(R.raw.aurora_stars))
             compositeProgram = link(source(R.raw.aurora_composite))
             farBrightnessUniform = GL.glGetUniformLocation(compositeProgram,"uFarBrightness")
+            sampleUniforms[0] = GL.glGetUniformLocation(program,"uSampleCount")
+            sampleUniforms[1] = GL.glGetUniformLocation(farProgram,"uSampleCount")
             depthWindUniforms[0] = GL.glGetUniformLocation(program,"uDepthWind[0]")
             depthWindUniforms[1] = GL.glGetUniformLocation(farProgram,"uDepthWind[0]")
             for ((i,name) in arrayOf("uNear","uFar","uStars","uResolution").withIndex())
@@ -239,8 +246,9 @@ private class AuroraRenderer(private val context: Context, private val failure: 
         GL.glUniform2f(u[0],bufferWidth.toFloat(),bufferHeight.toFloat())
         val shaderTime = if (static) 12f else time.toFloat()
         GL.glUniform1f(u[1],shaderTime)
-        AuroraDepthWind.write(shaderTime,depthWind)
-        GL.glUniform2fv(depthWindUniforms[if (static) 1 else 0],96,depthWind,0)
+        AuroraDepthWind.write(shaderTime,depthWind,frameSamples)
+        GL.glUniform1i(sampleUniforms[if (static) 1 else 0],frameSamples)
+        GL.glUniform2fv(depthWindUniforms[if (static) 1 else 0],frameSamples,depthWind,0)
         for (i in 0..4) GL.glUniform1f(u[i+2],if (static) 0f else snapshot[i])
         GL.glUniform1f(u[7],if (static) .34f else .85f)
         GL.glUniform1f(u[8],if (static) 0f else .75f)
@@ -267,7 +275,7 @@ private class AuroraRenderer(private val context: Context, private val failure: 
         GL.glUseProgram(starProgram)
         GL.glUniform2f(GL.glGetUniformLocation(starProgram,"uResolution"),screenWidth.toFloat(),screenHeight.toFloat())
         GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
-        cachedQuality = q; dirty = false
+        cachedQuality = q; cachedSamples = frameSamples; dirty = false
     }
     override fun onDrawFrame(unused: GL10?) {
         if (program == 0) { GL.glClear(GL.GL_COLOR_BUFFER_BIT); return }
@@ -279,7 +287,8 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             cycle.update(elapsed, snapshot[4], beatThreshold)
             previous = if (running) now else 0L
             val q = quality
-            if (dirty || cachedQuality != q) rebuildLayers(q)
+            frameSamples = AuroraSampling.normalize(sampleCount)
+            if (dirty || cachedQuality != q || cachedSamples != frameSamples) rebuildLayers(q)
             GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,framebuffers[0])
             GL.glViewport(0,0,bufferWidth,bufferHeight)
             volume(program,uniforms,false)

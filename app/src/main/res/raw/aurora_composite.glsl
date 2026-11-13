@@ -13,7 +13,7 @@ void main() {
  vec4 stars=texture(uStars,uv);
  // Black base, cached far pair, animated near pair, then alpha-brightness stars.
  // Preserve positions and full-resolution cache; only star alpha responds to rhythm.
- float pulseAlpha=clamp(stars.a*(.65+1.45*uStarPulse),0.,1.);
+ float pulseAlpha=clamp(stars.a*(.90+1.45*uStarPulse),0.,1.);
  vec3 color=mix(aurora,stars.rgb,pulseAlpha);
  color*=1.-.19*smoothstep(.20,.87,length(uv-.5));
  float h=uv.x<.48?mix(0.,.04,clamp((uv.x-.28)/.20,0.,1.)):mix(.04,.24,(uv.x-.48)/.52);
