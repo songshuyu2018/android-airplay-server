@@ -4,7 +4,7 @@ package io.github.jqssun.airplay.ui
 internal class AuroraBeatCycle {
     var elapsedSeconds = 0.0; private set
     var ageA = 17.6; private set
-    var ageB = 45.6; private set
+    var ageB = 35.6; private set
     var generationA = 0; private set
     var generationB = 0; private set
     var fadeA = 1.0; private set
@@ -14,7 +14,7 @@ internal class AuroraBeatCycle {
     var beatCount = 0; private set
     private var pending = false
     private var nextBand = 1
-    private var due = 10.4
+    private var due = 20.4
     private var lastSwitch = -18.0
     private var lastBeat = -100.0
     private var armed = true
@@ -33,24 +33,22 @@ internal class AuroraBeatCycle {
         if (onset && beatCount >= threshold.coerceIn(4,64)) pending = true
         val targetHidden = if (nextBand==0) ageA>=53.0 || elapsedSeconds-fadeStartA>=2.5
             else ageB>=51.0 || elapsedSeconds-fadeStartB>=2.5
-        if (pending && !targetHidden) {
+        if (pending && !targetHidden && elapsedSeconds-lastSwitch >= 5.5) {
             // Prepare the currently visible target before rebirth; never jump its shape.
             if (nextBand==0) fadeStartA=minOf(fadeStartA,elapsedSeconds)
             else fadeStartB=minOf(fadeStartB,elapsedSeconds)
         }
-        val accelerated = onset && pending && targetHidden && elapsedSeconds-lastSwitch >= 6.0
+        val accelerated = onset && pending && targetHidden && elapsedSeconds-lastSwitch >= 8.0
         val timed = elapsedSeconds >= due && (onset || elapsedSeconds-lastBeat > 2.0 || elapsedSeconds-due >= 1.2)
         if (accelerated || timed) {
             val born = nextBand; nextBand = 1-nextBand
             if (born==0) {
                 ageA=0.0; generationA++; fadeStartA=Double.POSITIVE_INFINITY
-                if (accelerated) fadeStartB=elapsedSeconds+3.5
             } else {
                 ageB=0.0; generationB++; fadeStartB=Double.POSITIVE_INFINITY
-                if (accelerated) fadeStartA=elapsedSeconds+3.5
             }
             lastBorn=born; births++; beatCount=0; pending=false
-            lastSwitch=elapsedSeconds; due=elapsedSeconds+28.0
+            lastSwitch=elapsedSeconds; due=elapsedSeconds+(if (nextBand==0) 18.0 else 38.0)
         }
         fun fade(start: Double): Double {
             val f=((elapsedSeconds-start)/2.5).coerceIn(0.0,1.0)
