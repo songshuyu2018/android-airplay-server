@@ -232,7 +232,7 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             lifeUniforms[0] = GL.glGetUniformLocation(program,"uBandAge")
             lifeUniforms[1] = GL.glGetUniformLocation(program,"uBandFade")
             GL.glDisable(GL.GL_DEPTH_TEST); GL.glDisable(GL.GL_BLEND)
-            material = AuroraMaterialCache.create(volume,source(R.raw.aurora_material),::link)
+            material = AuroraMaterialCache.create(volume,source(R.raw.aurora_material),source(R.raw.aurora_noise),::link)
         } catch (e: Exception) { fail(e) }
     }
     private fun locations(p: Int) = arrayOf("uResolution","uTime","uBass","uMid","uHigh","uEnergy","uBeat","uIntensity","uMotion")

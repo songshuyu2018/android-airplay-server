@@ -8,6 +8,7 @@ import kotlin.math.max
 internal class AuroraMaterialCache private constructor() {
     var volumeProgram = 0; private set
     private var materialProgram = 0
+    private var noise: AuroraNoiseCache? = null
     private var texture = 0
     private var framebuffer = 0
     private var width = 0
@@ -22,14 +23,23 @@ internal class AuroraMaterialCache private constructor() {
     private fun locations(program: Int, vararg names: String) =
         names.map { GL.glGetUniformLocation(program,it) }.toIntArray()
 
-    private fun initialize(volume: String, shader: String, link: (String) -> Int) {
+    private fun initialize(volume: String, shader: String, noiseShader: String, link: (String) -> Int) {
         check(GL.glGetString(GL.GL_EXTENSIONS).orEmpty().split(' ').contains("GL_EXT_color_buffer_float"))
         val maximum = IntArray(1); GL.glGetIntegerv(GL.GL_MAX_TEXTURE_SIZE,maximum,0)
         val viewport = IntArray(2); GL.glGetIntegerv(GL.GL_MAX_VIEWPORT_DIMS,viewport,0)
         val supportedWidth = minOf(maximum[0],viewport[0])
         check(supportedWidth >= 8192)
         width = minOf(16384,supportedWidth)
-        volumeProgram = link(volume.replace("#version 300 es","#version 300 es\n#define MATERIAL_LUT"))
+        noise = AuroraNoiseCache.create(noiseShader,link)
+        val reference = volume.replace("#version 300 es","#version 300 es\n#define MATERIAL_LUT")
+        volumeProgram = if (noise != null) try {
+            link(reference.replace("#version 300 es","#version 300 es\n#define NOISE_LUT"))
+        } catch (e: Exception) {
+            noise?.release(); noise=null
+            Log.w("Aurora","Noise shader unavailable; keeping geometry cache",e)
+            link(reference)
+        } else link(reference)
+        noise?.attach(volumeProgram)
         materialProgram = link(shader)
         uniforms = locations(volumeProgram,"uResolution","uTime","uBass","uMid","uHigh","uEnergy","uBeat","uIntensity","uMotion")
         shapeUniforms = locations(volumeProgram,"uShapeA","uShapeB")
@@ -69,11 +79,13 @@ internal class AuroraMaterialCache private constructor() {
         GL.glUniform1f(materialUniforms[3],extent)
         GL.glUniform1f(materialUniforms[4],width.toFloat())
         GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
+        noise?.prepare(time,volumeProgram)
         GL.glUseProgram(volumeProgram)
         GL.glUniform1f(geometryExtentUniform,extent)
     }
 
     fun release() {
+        noise?.release(); noise=null
         GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,0)
         if (texture!=0) GL.glDeleteTextures(1,intArrayOf(texture),0)
         if (framebuffer!=0) GL.glDeleteFramebuffers(1,intArrayOf(framebuffer),0)
@@ -83,9 +95,9 @@ internal class AuroraMaterialCache private constructor() {
     }
 
     companion object {
-        fun create(volume: String, shader: String, link: (String) -> Int): AuroraMaterialCache? {
+        fun create(volume: String, shader: String, noiseShader: String, link: (String) -> Int): AuroraMaterialCache? {
             val result = AuroraMaterialCache()
-            return try { result.initialize(volume,shader,link); result }
+            return try { result.initialize(volume,shader,noiseShader,link); result }
             catch (e: Exception) {
                 result.release()
                 // Allocation/format failures must not disable the original theme renderer.

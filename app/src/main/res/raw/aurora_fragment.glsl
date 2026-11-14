@@ -41,6 +41,24 @@ float noise21(vec2 p) {
                    hash21(i + vec2(1.0, 1.0)), f.x), f.y);
 }
 
+#ifdef NOISE_LUT
+uniform highp sampler2D uNoiseLattice;
+// x/y origin, destination row offset, number of rows for grain/silk/length.
+uniform ivec4 uNoiseOrigins[7];
+float materialNoise(vec2 p,int kind) {
+    vec2 cell=floor(p);
+    ivec4 origin=uNoiseOrigins[kind];
+    vec2 offset=cell-vec2(origin.xy);
+    if(offset.x<0. || offset.x>=float(textureSize(uNoiseLattice,0).x)
+        || offset.y<0. || offset.y>=float(origin.w)) return noise21(p);
+    vec4 corners=texelFetch(uNoiseLattice,ivec2(offset)+ivec2(0,origin.z),0);
+    vec2 f=fract(p); f=f*f*(3.-2.*f);
+    return mix(mix(corners.r,corners.g,f.x),mix(corners.b,corners.a,f.x),f.y);
+}
+#else
+float materialNoise(vec2 p,int kind) {return noise21(p);}
+#endif
+
 float starField(vec2 p, float scale, float seed) {
     vec2 grid = p * scale;
     vec2 cell = floor(grid);
@@ -64,12 +82,12 @@ vec3 columnLifecycle(float x, float t, float height, float seed, float bandOffse
     if (uBandFade[nearBand] <= 0.0 || baseAge <= 0.0 || baseAge >= fadeEnd + 0.025) return vec3(0.0);
     // After full arrival and before fade, phase noise cannot change visibility.
     if (baseAge >= 0.106 && baseAge <= holdEnd) {
-        float rate = noise21(vec2(x * 0.51 + seed * 4.3, seed * 6.1));
+        float rate = materialNoise(vec2(x * 0.51 + seed * 4.3, seed * 6.1),4+nearBand*2);
         return vec3(uBandFade[nearBand] * smoothstep(-0.64, -0.32, height), 1.0, rate);
     }
 #endif
-    float phaseSeed = noise21(vec2(x * 0.72 + seed * 7.1, seed * 3.7));
-    float rateSeed = noise21(vec2(x * 0.51 + seed * 4.3, seed * 6.1));
+    float phaseSeed = materialNoise(vec2(x * 0.72 + seed * 7.1, seed * 3.7),3+(bandOffset<.5?0:2));
+    float rateSeed = materialNoise(vec2(x * 0.51 + seed * 4.3, seed * 6.1),4+(bandOffset<.5?0:2));
     // Overlapping lifetimes allow both neighbouring pairs to coexist.
     // A small local phase spread keeps the downward arrivals irregular.
     float clock = t / period + 0.012 * sin(t * 0.055 + seed);
@@ -197,7 +215,7 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
         float dr = (z - rear) / rearWidth;
         float dfn = (z - frontNeighbour) / nearNeighbourWidth;
         float drn = (z - rearNeighbour) / farNeighbourWidth;
-        // Even the widest halo is below exp(-12.8) beyond eight sigmas.
+        // Reject negligible tails; retain the tighter near-layer bound and original far bound.
 #ifdef FAR_LAYER
         if (min(abs(dr),abs(drn)) > 8.0) continue;
 #else
@@ -268,8 +286,8 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
                       + (x + 0.33) * frontNeighbourDensity
                       + (rearX - 0.27) * rearNeighbourDensity) / (fullDensity + 0.0001);
 
-        float grain = noise21(vec2(fibreX * 16.0 - t * 0.180,
-                                   z * 0.12 + 2.64 * 0.07 + t * 0.017));
+        float grain = materialNoise(vec2(fibreX * 16.0 - t * 0.180,
+                                   z * 0.12 + 2.64 * 0.07 + t * 0.017),0);
         float base = 2.64 + (grain - 0.5) * 0.055;
         float height = p.y - base;
         float haloDensity = frontHaloKernel * (0.20 / frontWidth) * nearPresence * 0.90
@@ -283,10 +301,10 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
             sum += vec3(0.11, 1.00, 0.51) * halo * 0.275 * (55.0 / intervals);
             continue;
         }
-        float silk = noise21(vec2(fibreX * 51.0 - t * 0.320,
-                                  2.64 * 0.15 + t * 0.022));
+        float silk = materialNoise(vec2(fibreX * 51.0 - t * 0.320,
+                                  2.64 * 0.15 + t * 0.022),1);
         float rays = (0.15 + 0.85 * grain) * (0.50 + 0.50 * silk);
-        float lengthField = noise21(vec2(fibreX * 2.80, z * 0.20 + t * 0.015));
+        float lengthField = materialNoise(vec2(fibreX * 2.80, z * 0.20 + t * 0.015),2);
         float rayLength = 0.90 + lengthField * 0.46;
         // A soft packet travels from high atmosphere down each straight ray:
         // increasing time in height + time*speed moves a packet toward -Y.
