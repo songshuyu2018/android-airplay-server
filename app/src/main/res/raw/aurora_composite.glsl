@@ -7,6 +7,7 @@ uniform float uFarBrightness;
 uniform float uStarPulse;
 uniform highp sampler2D uStars;
 uniform bool uCacheShade;
+uniform bool uCompactSky;
 uniform vec3 uStarColour;
 out vec4 fragColor;
 float staticShade(vec2 uv) {
@@ -20,6 +21,14 @@ float staticShade(vec2 uv) {
 void main() {
  vec2 uv=gl_FragCoord.xy/uResolution;
  vec3 aurora=1.-(1.-texture(uNear,uv).rgb)*(1.-texture(uFar,uv).rgb*uFarBrightness);
+ // RG8: full-resolution star alpha plus affine low-frequency shade.
+ if(uCompactSky) {
+  vec2 sky=texelFetch(uStars,ivec2(gl_FragCoord.xy),0).rg;
+  float alpha=clamp(sky.r*(.90+1.45*uStarPulse),0.,1.);
+  vec3 color=mix(aurora,uStarColour,alpha);
+  fragColor=vec4(color*(sky.g*.70+.30),1.);
+  return;
+ }
  vec4 stars=uCacheShade?texelFetch(uStars,ivec2(gl_FragCoord.xy),0):texture(uStars,uv);
  // Black base, cached far pair, animated near pair, then alpha-brightness stars.
  // Preserve positions and full-resolution cache; only star alpha responds to rhythm.

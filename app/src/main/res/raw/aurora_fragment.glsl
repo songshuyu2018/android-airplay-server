@@ -145,9 +145,28 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
     // A footprint-aware Gaussian avoids visible fixed-depth slice replicas.
     float intervals = float(clamp(uSampleCount, 48, 96) - 1);
     float depthStep = 7.8 / intervals;
+#ifndef FAR_LAYER
+    const float nearTailSigma = 6.5;
+    // Triangle inequalities bound both sheets for every material X and time.
+    // Cached interpolation is convex; the extra margin covers float rounding.
+    float frontAmplitude = abs(uShapeA.x) + .16;
+    float neighbourAmplitude = abs(uShapeB.x) + .13;
+    float frontSlopeBound = (frontAmplitude + .46 * 2.64) * abs(uShapeA.y);
+    float neighbourSlopeBound = (neighbourAmplitude + .34 * 2.30) * abs(uShapeB.y);
+    float raySlopeBound = abs(slope.x) + .111;
+    float frontFootprintBound = (1. + raySlopeBound * frontSlopeBound) * depthStep;
+    float neighbourFootprintBound = (1. + raySlopeBound * neighbourSlopeBound) * depthStep;
+    float frontWidthBound = sqrt(.20*.20 + frontFootprintBound*frontFootprintBound/6.);
+    float neighbourWidthBound = sqrt(.18*.18 + neighbourFootprintBound*neighbourFootprintBound/6.);
+    float lastNearDepth = max(3.20 + frontAmplitude + .46 + .20 + nearTailSigma*frontWidthBound,
+                             3.98 + neighbourAmplitude + .34 + .12 + nearTailSigma*neighbourWidthBound) + .01;
+#endif
     for (int i = 0; i < 96; ++i) {
         if (i >= uSampleCount) break;
         float z = 1.0 + float(i) * depthStep;
+#ifndef FAR_LAYER
+        if (z > lastNearDepth) break;
+#endif
         vec3 p = vec3(slope * z, z);
         // All four lifecycle reveal masks are exactly zero below height -0.64.
         // Skip before evaluating geometry, noise, trigonometry or exponentials.
@@ -219,7 +238,7 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
 #ifdef FAR_LAYER
         if (min(abs(dr),abs(drn)) > 8.0) continue;
 #else
-        if (min(abs(df),abs(dfn)) > 6.5) continue;
+        if (min(abs(df),abs(dfn)) > nearTailSigma) continue;
 #endif
         float frontHaloKernel = exp(-df * df * 0.20);
         float rearHaloKernel = exp(-dr * dr * 0.20);

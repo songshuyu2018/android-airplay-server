@@ -140,10 +140,14 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private var farBrightnessUniform = -1
     private var starPulseUniform = -1
     private var starShadeUniform = -1
+    private var starCompactUniform = -1
+    private var compositeCompactUniform = -1
+    private var compactAvailable = true
+    private var cachedCompact = false
     private var compositeShadeUniform = -1
     private var starColourUniform = -1
-    // Reuse the existing star texture: RG stores a 16-bit static shade, A stores stars.
-    // Pixel (0,0) retains the GPU-quantized star colour, read once per cache rebuild.
+    // RG8 stores full-resolution star brightness and a bounded static shade; RGBA8 is the fallback.
+    // Read the GPU-quantized palette once per cache rebuild, using RGBA8 storage.
     private val starColourPixel = ByteBuffer.allocateDirect(4)
     private var shadeReady = false
     @Volatile var beatThreshold = 16
@@ -202,7 +206,7 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private fun source(id: Int) = context.resources.openRawResource(id).bufferedReader().use { it.readText() }
     override fun onSurfaceCreated(unused: GL10?, config: EGLConfig?) {
         program = 0; previous = 0; dirty = true; cachedQuality = null
-        textures.fill(0); framebuffers.fill(0); material = null; shadeReady = false
+        textures.fill(0); framebuffers.fill(0); material = null; shadeReady = false; compactAvailable = true; cachedCompact = false
         GL.glClearColor(0f, 0f, 0f, 1f)
         try {
             val volume = source(R.raw.aurora_fragment)
@@ -227,6 +231,8 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             shapeUniforms[1] = GL.glGetUniformLocation(program,"uShapeB")
             starPulseUniform = GL.glGetUniformLocation(compositeProgram,"uStarPulse")
             starShadeUniform = GL.glGetUniformLocation(starProgram,"uCacheShade")
+            starCompactUniform = GL.glGetUniformLocation(starProgram,"uCompactStars")
+            compositeCompactUniform = GL.glGetUniformLocation(compositeProgram,"uCompactSky")
             compositeShadeUniform = GL.glGetUniformLocation(compositeProgram,"uCacheShade")
             starColourUniform = GL.glGetUniformLocation(compositeProgram,"uStarColour")
             lifeUniforms[0] = GL.glGetUniformLocation(program,"uBandAge")
@@ -244,13 +250,14 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     override fun onSurfaceChanged(unused: GL10?, width: Int, height: Int) {
         screenWidth = max(1, width); screenHeight = max(1, height); dirty = true
     }
-    private fun target(index: Int, width: Int, height: Int) {
+    private fun target(index: Int, width: Int, height: Int, compact: Boolean = false) {
         GL.glBindTexture(GL.GL_TEXTURE_2D, textures[index])
         GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
         GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
         GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE)
         GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE)
-        GL.glTexImage2D(GL.GL_TEXTURE_2D,0,GL.GL_RGBA8,width,height,0,GL.GL_RGBA,GL.GL_UNSIGNED_BYTE,null)
+        GL.glTexImage2D(GL.GL_TEXTURE_2D,0,if (compact) GL.GL_RG8 else GL.GL_RGBA8,width,height,0,
+            if (compact) GL.GL_RG else GL.GL_RGBA,GL.GL_UNSIGNED_BYTE,null)
         GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,framebuffers[index])
         GL.glFramebufferTexture2D(GL.GL_FRAMEBUFFER,GL.GL_COLOR_ATTACHMENT0,GL.GL_TEXTURE_2D,textures[index],0)
         check(GL.glCheckFramebufferStatus(GL.GL_FRAMEBUFFER) == GL.GL_FRAMEBUFFER_COMPLETE) { "Incomplete aurora layer" }
@@ -276,35 +283,60 @@ private class AuroraRenderer(private val context: Context, private val failure: 
         }
         GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
     }
-    private fun cacheStars() {
+    private fun cacheStars(compact: Boolean): Boolean {
         shadeReady = false
         val dither = GL.glIsEnabled(GL.GL_DITHER)
         try {
-            // Dithering would corrupt the packed high/low shade bytes.
             GL.glDisable(GL.GL_DITHER)
-            GL.glUniform1i(starShadeUniform,1)
-            GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
-            starColourPixel.position(0)
-            GL.glReadPixels(0,0,1,1,GL.GL_RGBA,GL.GL_UNSIGNED_BYTE,starColourPixel)
-            check(GL.glGetError()==GL.GL_NO_ERROR) { "Cannot cache static shade" }
+            GL.glUniform1i(starCompactUniform,0)
+            if (compact) {
+                // Read the GPU-quantized palette from the existing RGBA8 near target.
+                // The following volume pass overwrites it before presentation.
+                GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,framebuffers[0])
+                GL.glViewport(0,0,1,1)
+                GL.glUniform1i(starShadeUniform,0)
+                GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
+                starColourPixel.position(0)
+                GL.glReadPixels(0,0,1,1,GL.GL_RGBA,GL.GL_UNSIGNED_BYTE,starColourPixel)
+                GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,framebuffers[2])
+                GL.glViewport(0,0,screenWidth,screenHeight)
+                GL.glUniform1i(starCompactUniform,1)
+                GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
+            } else {
+                GL.glUniform1i(starShadeUniform,1)
+                GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
+                starColourPixel.position(0)
+                GL.glReadPixels(0,0,1,1,GL.GL_RGBA,GL.GL_UNSIGNED_BYTE,starColourPixel)
+            }
+            check(GL.glGetError()==GL.GL_NO_ERROR) { "Cannot cache static sky" }
             shadeReady = true
         } catch (e: Exception) {
-            Log.w("Aurora","Static shade cache failed; using reference composite",e)
+            Log.w("Aurora","Static sky cache failed; using reference composite",e)
+            if (compact) compactAvailable=false
         } finally {
             if (dither) GL.glEnable(GL.GL_DITHER) else GL.glDisable(GL.GL_DITHER)
         }
         if (!shadeReady) {
+            if (compact) {
+                for (i in 0 until 8) if (GL.glGetError()==GL.GL_NO_ERROR) break
+                target(2,screenWidth,screenHeight)
+                GL.glViewport(0,0,screenWidth,screenHeight)
+            }
+            GL.glUseProgram(starProgram)
+            GL.glUniform1i(starCompactUniform,0)
             GL.glUniform1i(starShadeUniform,0)
             GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
         }
         GL.glUseProgram(compositeProgram)
         GL.glUniform1i(compositeShadeUniform,if (shadeReady) 1 else 0)
+        GL.glUniform1i(compositeCompactUniform,if (shadeReady && compact) 1 else 0)
         if (shadeReady) GL.glUniform3f(starColourUniform,
             (starColourPixel.get(0).toInt() and 255)/255f,
             (starColourPixel.get(1).toInt() and 255)/255f,
             (starColourPixel.get(2).toInt() and 255)/255f)
+        return shadeReady && compact
     }
-    private fun rebuildLayers(q: AuroraQuality) {
+    private fun rebuildLayers(q: AuroraQuality, requestedCompact: Boolean) {
         GL.glDeleteTextures(3,textures,0); GL.glDeleteFramebuffers(3,framebuffers,0)
         GL.glGenTextures(3,textures,0); GL.glGenFramebuffers(3,framebuffers,0)
         val size = q.bufferSize(screenWidth, screenHeight)
@@ -313,11 +345,19 @@ private class AuroraRenderer(private val context: Context, private val failure: 
         target(1,bufferWidth,bufferHeight)
         GL.glViewport(0,0,bufferWidth,bufferHeight)
         volume(farProgram,locations(farProgram),true)
-        target(2,screenWidth,screenHeight)
+        var compact = requestedCompact
+        try { target(2,screenWidth,screenHeight,compact) }
+        catch (e: Exception) {
+            if (!compact) throw e
+            Log.w("Aurora","RG8 sky unavailable; retaining RGBA8 cache",e)
+            compactAvailable=false; compact=false
+            for (i in 0 until 8) if (GL.glGetError()==GL.GL_NO_ERROR) break
+            target(2,screenWidth,screenHeight)
+        }
         GL.glViewport(0,0,screenWidth,screenHeight)
         GL.glUseProgram(starProgram)
         GL.glUniform2f(GL.glGetUniformLocation(starProgram,"uResolution"),screenWidth.toFloat(),screenHeight.toFloat())
-        cacheStars()
+        cachedCompact = cacheStars(compact)
         cachedQuality = q; cachedSamples = frameSamples; dirty = false
     }
     override fun onDrawFrame(unused: GL10?) {
@@ -331,8 +371,11 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             previous = if (running) now else 0L
             val q = quality
             frameSamples = AuroraSampling.normalize(sampleCount)
-            if (dirty || cachedQuality != q || cachedSamples != frameSamples) rebuildLayers(q)
-            var cache = if (materialEnabled) material else null
+            val frameMaterialEnabled = materialEnabled
+            val compact = frameMaterialEnabled && compactAvailable
+            if (dirty || cachedQuality != q || cachedSamples != frameSamples || cachedCompact != compact)
+                rebuildLayers(q,compact)
+            var cache = if (frameMaterialEnabled) material else null
             if (cache != null) {
                 try {
                     AuroraMotion.writeGenerations(cycle.generationA,cycle.generationB,shapes)

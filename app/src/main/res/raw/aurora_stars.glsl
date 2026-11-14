@@ -2,6 +2,7 @@
 precision highp float;
 uniform vec2 uResolution;
 uniform bool uCacheShade;
+uniform bool uCompactStars;
 out vec4 fragColor;
 float staticShade(vec2 uv) {
  float vignette=1.-.19*smoothstep(.20,.87,length(uv-.5));
@@ -41,6 +42,8 @@ void main() {
  vec2 uv=gl_FragCoord.xy/uResolution;
  vec2 p=vec2((uv.x-.5)*uResolution.x/uResolution.y,uv.y-.5);
  float brightness=clamp((starField(p,98.,2.7)+starField(p,163.,18.9)*.42)*1.55,0.,1.);
+ // Shade [.3078,.98] fits [.30,1.]; keep star alpha native and 8-bit exact.
+ if(uCompactStars) {fragColor=vec4(brightness,(staticShade(uv)-.30)/.70,0.,1.);return;}
  if(uCacheShade && !(gl_FragCoord.x<1.&&gl_FragCoord.y<1.)) {
   float value=floor(clamp(staticShade(uv),0.,1.)*65535.+.5);
   float highByte=floor(value/256.);float lowByte=value-highByte*256.;
