@@ -44,10 +44,10 @@ float noise21(vec2 p) {
 #ifdef NOISE_LUT
 uniform highp sampler2D uNoiseLattice;
 // x/y origin, destination row offset, number of rows for grain/silk/length.
-uniform ivec4 uNoiseOrigins[7];
+uniform highp ivec4 uNoiseOrigins[7];
 float materialNoise(vec2 p,int kind) {
     vec2 cell=floor(p);
-    ivec4 origin=uNoiseOrigins[kind];
+    highp ivec4 origin=uNoiseOrigins[kind];
     vec2 offset=cell-vec2(origin.xy);
     if(offset.x<0. || offset.x>=float(textureSize(uNoiseLattice,0).x)
         || offset.y<0. || offset.y>=float(origin.w)) return noise21(p);
