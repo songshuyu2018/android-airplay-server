@@ -221,7 +221,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             beat = { lightBeat.floatValue }, tuning = lightTuning)
         Row(Modifier.fillMaxSize().padding(horizontal = edge).padding(top = topGap, bottom = if (compact) 18.dp else 40.dp), verticalAlignment = Alignment.CenterVertically) {
             BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
-                val discSize = minOf(maxWidth, maxHeight)
+                val discSize = minOf(maxWidth, maxHeight) * .80f
                 RecordSpectrum(displayCover, colors, { angle.floatValue }, { spectrum.value }, Modifier.size(discSize))
             }
             Spacer(Modifier.width(columnGap))
