@@ -146,6 +146,10 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
     float intervals = float(clamp(uSampleCount, 48, 96) - 1);
     float depthStep = 7.8 / intervals;
 #ifndef FAR_LAYER
+    // Keep local packet shear bounded: a fixed downward carrier plus smooth
+    // reversible phase offsets. At t=0 this matches the original first derivative.
+    float packetTravel = t * 0.26;
+    float packetShear = 3.2 * sin(t * 0.05);
     const float nearTailSigma = 6.5;
     // Triangle inequalities bound both sheets for every material X and time.
     // Cached interpolation is convex; the extra margin covers float rounding.
@@ -328,10 +332,16 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
         // A soft packet travels from high atmosphere down each straight ray:
         // increasing time in height + time*speed moves a packet toward -Y.
         // Per-bundle speed and phase prevent a shared horizontal scan line.
-        float fallSpeed = 0.18 + columnSeed * 0.16;
         float fallPhase = columnSeed * 7.4 + grain * 0.20 + z * 0.20;
+#ifdef FAR_LAYER
+        float fallSpeed = 0.18 + columnSeed * 0.16;
         float descending = noise21(vec2(fibreX * 1.85 + z * 0.27,
                                          height * 1.10 + t * fallSpeed + fallPhase));
+#else
+        float descending = noise21(vec2(fibreX * 1.85 + z * 0.27,
+                                         height * 1.10 + packetTravel
+                                         + packetShear * (columnSeed - 0.5) + fallPhase));
+#endif
         float packet = smoothstep(0.26, 0.78, descending);
         float flowLight = 0.72 + packet * 0.56;
         float veil = smoothstep(-0.19, 0.08, height)
