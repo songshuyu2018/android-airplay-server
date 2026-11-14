@@ -139,6 +139,13 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private val compositeUniforms = IntArray(4)
     private var farBrightnessUniform = -1
     private var starPulseUniform = -1
+    private var starShadeUniform = -1
+    private var compositeShadeUniform = -1
+    private var starColourUniform = -1
+    // Reuse the existing star texture: RG stores a 16-bit static shade, A stores stars.
+    // Pixel (0,0) retains the GPU-quantized star colour, read once per cache rebuild.
+    private val starColourPixel = ByteBuffer.allocateDirect(4)
+    private var shadeReady = false
     @Volatile var beatThreshold = 16
     private val cycle = AuroraBeatCycle()
     private val lifeUniforms = IntArray(2)
@@ -195,7 +202,7 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private fun source(id: Int) = context.resources.openRawResource(id).bufferedReader().use { it.readText() }
     override fun onSurfaceCreated(unused: GL10?, config: EGLConfig?) {
         program = 0; previous = 0; dirty = true; cachedQuality = null
-        textures.fill(0); framebuffers.fill(0); material = null
+        textures.fill(0); framebuffers.fill(0); material = null; shadeReady = false
         GL.glClearColor(0f, 0f, 0f, 1f)
         try {
             val volume = source(R.raw.aurora_fragment)
@@ -219,6 +226,9 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             shapeUniforms[0] = GL.glGetUniformLocation(program,"uShapeA")
             shapeUniforms[1] = GL.glGetUniformLocation(program,"uShapeB")
             starPulseUniform = GL.glGetUniformLocation(compositeProgram,"uStarPulse")
+            starShadeUniform = GL.glGetUniformLocation(starProgram,"uCacheShade")
+            compositeShadeUniform = GL.glGetUniformLocation(compositeProgram,"uCacheShade")
+            starColourUniform = GL.glGetUniformLocation(compositeProgram,"uStarColour")
             lifeUniforms[0] = GL.glGetUniformLocation(program,"uBandAge")
             lifeUniforms[1] = GL.glGetUniformLocation(program,"uBandFade")
             GL.glDisable(GL.GL_DEPTH_TEST); GL.glDisable(GL.GL_BLEND)
@@ -266,6 +276,34 @@ private class AuroraRenderer(private val context: Context, private val failure: 
         }
         GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
     }
+    private fun cacheStars() {
+        shadeReady = false
+        val dither = GL.glIsEnabled(GL.GL_DITHER)
+        try {
+            // Dithering would corrupt the packed high/low shade bytes.
+            GL.glDisable(GL.GL_DITHER)
+            GL.glUniform1i(starShadeUniform,1)
+            GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
+            starColourPixel.position(0)
+            GL.glReadPixels(0,0,1,1,GL.GL_RGBA,GL.GL_UNSIGNED_BYTE,starColourPixel)
+            check(GL.glGetError()==GL.GL_NO_ERROR) { "Cannot cache static shade" }
+            shadeReady = true
+        } catch (e: Exception) {
+            Log.w("Aurora","Static shade cache failed; using reference composite",e)
+        } finally {
+            if (dither) GL.glEnable(GL.GL_DITHER) else GL.glDisable(GL.GL_DITHER)
+        }
+        if (!shadeReady) {
+            GL.glUniform1i(starShadeUniform,0)
+            GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
+        }
+        GL.glUseProgram(compositeProgram)
+        GL.glUniform1i(compositeShadeUniform,if (shadeReady) 1 else 0)
+        if (shadeReady) GL.glUniform3f(starColourUniform,
+            (starColourPixel.get(0).toInt() and 255)/255f,
+            (starColourPixel.get(1).toInt() and 255)/255f,
+            (starColourPixel.get(2).toInt() and 255)/255f)
+    }
     private fun rebuildLayers(q: AuroraQuality) {
         GL.glDeleteTextures(3,textures,0); GL.glDeleteFramebuffers(3,framebuffers,0)
         GL.glGenTextures(3,textures,0); GL.glGenFramebuffers(3,framebuffers,0)
@@ -279,7 +317,7 @@ private class AuroraRenderer(private val context: Context, private val failure: 
         GL.glViewport(0,0,screenWidth,screenHeight)
         GL.glUseProgram(starProgram)
         GL.glUniform2f(GL.glGetUniformLocation(starProgram,"uResolution"),screenWidth.toFloat(),screenHeight.toFloat())
-        GL.glDrawArrays(GL.GL_TRIANGLES,0,3)
+        cacheStars()
         cachedQuality = q; cachedSamples = frameSamples; dirty = false
     }
     override fun onDrawFrame(unused: GL10?) {

@@ -201,7 +201,7 @@ vec3 auroraVolume(vec2 screen, float aspect, float t) {
 #ifdef FAR_LAYER
         if (min(abs(dr),abs(drn)) > 8.0) continue;
 #else
-        if (min(abs(df),abs(dfn)) > 8.0) continue;
+        if (min(abs(df),abs(dfn)) > 6.5) continue;
 #endif
         float frontHaloKernel = exp(-df * df * 0.20);
         float rearHaloKernel = exp(-dr * dr * 0.20);
