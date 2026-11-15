@@ -89,6 +89,7 @@ internal class AuroraPreRendered private constructor(private val program: Int) {
     private val sceneFramebuffer=IntArray(1)
     private var sceneWidth=0
     private var sceneHeight=0
+    private var zoomUniform=-1
     private var outputUniform=-1
     private var resolutionUniform=-1
     private fun initialize(context: Context) {
@@ -100,6 +101,7 @@ internal class AuroraPreRendered private constructor(private val program: Int) {
         GL.glGenTextures(8,textures,0)
         GL.glGenTextures(1,sceneTexture,0)
         GL.glGenFramebuffers(1,sceneFramebuffer,0)
+        zoomUniform=GL.glGetUniformLocation(program,"uCachedZoom")
         outputUniform=GL.glGetUniformLocation(program,"uCachedOutputOnly")
         resolutionUniform=GL.glGetUniformLocation(program,"uResolution")
         locations[0]=GL.glGetUniformLocation(program,"uCachedBlend")
@@ -201,7 +203,7 @@ internal class AuroraPreRendered private constructor(private val program: Int) {
     }
     /** Evaluate reveal/exposure at material resolution; native stars stay in the final pass. */
     fun renderNear(blend: Float, aspect: Float, ageA: Float, ageB: Float, fadeA: Float, fadeB: Float,
-        music: Float, liveTexture: Int, outputWidth: Int, outputHeight: Int): Int {
+        music: Float, liveTexture: Int, outputWidth: Int, outputHeight: Int, zoom: Float=1f): Int {
         val scale=minOf(1f,sources[0].height.toFloat()/outputHeight)
         val width=maxOf(1,kotlin.math.round(outputWidth*scale).toInt())
         val height=maxOf(1,kotlin.math.round(outputHeight*scale).toInt())
@@ -218,6 +220,7 @@ internal class AuroraPreRendered private constructor(private val program: Int) {
             sceneWidth=width;sceneHeight=height
         }
         GL.glViewport(0,0,width,height);GL.glUseProgram(program)
+        GL.glUniform1f(zoomUniform,zoom.coerceIn(.5f,2f))
         GL.glUniform1i(outputUniform,1);GL.glUniform2f(resolutionUniform,width.toFloat(),height.toFloat())
         try {
             GL.glActiveTexture(GL.GL_TEXTURE0);GL.glBindTexture(GL.GL_TEXTURE_2D,liveTexture)

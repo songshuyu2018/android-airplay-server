@@ -249,4 +249,6 @@
     <string name="setting_aurora_material_cache_desc">缓存褶皱形态，减少重复计算；建议使用 96 次采样对比。关闭使用原算法，不支持的设备自动回退。保留已选择的采样次数。</string>
     <string name="setting_aurora_prerender">Pre-rendered aurora (experimental)</string>
     <string name="setting_aurora_prerender_desc">Fixed 256-sample cached animation with lower rendering load. Background FPS, beat timing and stars remain live. Quality and sampling controls apply to real-time mode, which is also used on unsupported devices.</string>
+    <string name="setting_aurora_prerender_scale" formatted="false">Pre-rendered aurora scale (%)</string>
+    <string name="setting_aurora_prerender_scale_desc" formatted="false">50–200%; default 100%. Larger values enlarge the near aurora and crop more of the material. Smaller values reveal more. Applies only to pre-rendered dynamic aurora.</string>
 </resources>

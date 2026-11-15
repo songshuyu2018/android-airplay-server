@@ -46,6 +46,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
     val resolution by viewModel.pref(Prefs.RESOLUTION).collectAsState()
     val recordRotation by viewModel.pref(Prefs.PLAYER_RECORD_ROTATION).collectAsState()
     val themePreview by viewModel.pref(Prefs.PLAYER_THEME_PREVIEW).collectAsState()
+    val preRenderScale by viewModel.pref(Prefs.PLAYER_AURORA_PRERENDER_SCALE).collectAsState()
     val preRendered by viewModel.pref(Prefs.PLAYER_AURORA_PRERENDER).collectAsState()
     val auroraBeats by viewModel.pref(Prefs.PLAYER_AURORA_BEATS).collectAsState()
     val materialCache by viewModel.pref(Prefs.PLAYER_AURORA_MATERIAL_CACHE).collectAsState()
@@ -225,6 +226,14 @@ fun SettingsScreen(viewModel: MainViewModel) {
             description = stringResource(R.string.setting_aurora_prerender_desc),
             checked = preRendered,
             onCheckedChange = { viewModel.set(Prefs.PLAYER_AURORA_PRERENDER, it) }
+        )
+
+        SettingTextField(
+            label = stringResource(R.string.setting_aurora_prerender_scale),
+            description = stringResource(R.string.setting_aurora_prerender_scale_desc),
+            value = preRenderScale.toString(),
+            onCommit = { viewModel.set(Prefs.PLAYER_AURORA_PRERENDER_SCALE, it.toInt()) },
+            range = Prefs.PLAYER_AURORA_PRERENDER_SCALE.range
         )
 
         SettingChips(

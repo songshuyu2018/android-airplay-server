@@ -21,6 +21,7 @@ uniform vec2 uCachedFractions;
 uniform vec4 uCachedLife;
 uniform float uCachedMusic;
 uniform float uCachedAspect;
+uniform float uCachedZoom;
 vec3 cachedBand(vec4 field,float age,float fade,float holdEnd,float fadeEnd,vec2 uv) {
     float threshold=field.a*.12;
     float birth=smoothstep(0.,.0125,age)*smoothstep(threshold-.0035,threshold+.0035,age);
@@ -35,7 +36,7 @@ vec3 cachedNear(vec2 uv) {
     if(uCachedBlend<1.)live=texture(uNear,uv).rgb;
     // Square views retain curtain size; gradually reveal full width toward 4:3.
     float visibleWidth=mix(.62,1.,smoothstep(1.,4./3.,uCachedAspect));
-    float height=min(uCachedAspect/(3.*visibleWidth),.88);
+    float height=min(uCachedAspect/(3.*visibleWidth),.88)*clamp(uCachedZoom,.5,2.);
     vec2 sampleUV=vec2((uv.x-.5)*uCachedAspect/(3.*height)+.5,.5-(uv.y-.56)/height);
     if(any(lessThan(sampleUV,vec2(0.))) || any(greaterThan(sampleUV,vec2(1.))))
         return mix(live,vec3(0.),uCachedBlend);

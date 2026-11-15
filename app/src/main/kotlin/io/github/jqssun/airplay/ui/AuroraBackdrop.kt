@@ -23,7 +23,7 @@ import kotlin.math.*
 /** Background only: no input, playback commands, JNI or foreground drawing. */
 @Composable
 internal fun AuroraBackdrop(playing: Boolean, energy: () -> Float, beat: () -> Float,
-    spectrum: () -> FloatArray, quality: Int, frameRate: Int, sampleCount: Int, materialCache: Boolean, preRendered: Boolean, beatThreshold: Int, modifier: Modifier = Modifier, onFailure: () -> Unit) {
+    spectrum: () -> FloatArray, quality: Int, frameRate: Int, sampleCount: Int, materialCache: Boolean, preRendered: Boolean, preRenderScale: Int, beatThreshold: Int, modifier: Modifier = Modifier, onFailure: () -> Unit) {
     val context = LocalContext.current
     val lifecycle = (context as? LifecycleOwner)?.lifecycle
     val latestEnergy by rememberUpdatedState(energy)
@@ -41,6 +41,7 @@ internal fun AuroraBackdrop(playing: Boolean, energy: () -> Float, beat: () -> F
         it.renderer.sampleCount = AuroraSampling.normalize(sampleCount)
         it.renderer.materialEnabled = materialCache
         it.renderer.preRendered = preRendered
+        it.renderer.preRenderScale = preRenderScale.coerceIn(50,200)
     })
     DisposableEffect(view, lifecycle, playing) {
         view.input = { view.renderer.input(latestEnergy(), latestBeat(), latestSpectrum()) }
@@ -132,6 +133,7 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private var compositeProgram = 0
     @Volatile var materialEnabled = true
     private var material: AuroraMaterialCache? = null
+    @Volatile var preRenderScale = 100
     @Volatile var preRendered = false
     private var preCache: AuroraPreRendered? = null
     private var preTried = false
@@ -424,7 +426,7 @@ private class AuroraRenderer(private val context: Context, private val failure: 
                     finalNear=preCache?.renderNear(preBlend,aspect,(cycle.ageA/56).toFloat(),(cycle.ageB/56).toFloat(),
                         cycle.fadeA.toFloat(),cycle.fadeB.toFloat(),
                         (1f+(snapshot[3]*.19f+snapshot[0]*.15f+snapshot[1]*.07f)/.83f+starPulse*.04f).coerceIn(.8f,1.6f),
-                        textures[0],screenWidth,screenHeight) ?: textures[0]
+                        textures[0],screenWidth,screenHeight,preRenderScale.coerceIn(50,200)/100f) ?: textures[0]
                 } catch(e: Exception) {
                     Log.w("Aurora","Pre-render composition failed; using live background",e)
                     preCache?.release();preCache=null;preBlend=0f

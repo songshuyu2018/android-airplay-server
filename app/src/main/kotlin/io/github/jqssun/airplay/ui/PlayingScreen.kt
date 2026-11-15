@@ -87,6 +87,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     val reportedPlaying by viewModel.audioPlaying.collectAsState()
     val rotationEnabled by viewModel.pref(Prefs.PLAYER_RECORD_ROTATION).collectAsState()
     val previewRequested by viewModel.pref(Prefs.PLAYER_THEME_PREVIEW).collectAsState()
+    val preRenderScale by viewModel.pref(Prefs.PLAYER_AURORA_PRERENDER_SCALE).collectAsState()
     val preRendered by viewModel.pref(Prefs.PLAYER_AURORA_PRERENDER).collectAsState()
     val auroraBeats by viewModel.pref(Prefs.PLAYER_AURORA_BEATS).collectAsState()
     val materialCache by viewModel.pref(Prefs.PLAYER_AURORA_MATERIAL_CACHE).collectAsState()
@@ -216,7 +217,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             detailsWidth.value * .12f).coerceAtLeast(18f).sp
         if (auroraEnabled && !auroraFailed) AuroraBackdrop(
             playing, energy = { lightEnergy.floatValue }, beat = { lightBeat.floatValue },
-            spectrum = { spectrum.value }, quality = auroraQuality, frameRate = auroraFps, sampleCount = auroraSamples, materialCache = materialCache, preRendered = preRendered, beatThreshold = auroraBeats, modifier = Modifier.fillMaxSize(),
+            spectrum = { spectrum.value }, quality = auroraQuality, frameRate = auroraFps, sampleCount = auroraSamples, materialCache = materialCache, preRendered = preRendered, preRenderScale = preRenderScale, beatThreshold = auroraBeats, modifier = Modifier.fillMaxSize(),
             onFailure = { auroraFailed = true })
         else PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue },
             beat = { lightBeat.floatValue }, tuning = lightTuning)
