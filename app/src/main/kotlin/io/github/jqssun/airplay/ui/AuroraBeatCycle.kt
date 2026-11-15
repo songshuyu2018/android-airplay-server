@@ -33,13 +33,16 @@ internal class AuroraBeatCycle {
         if (onset && beatCount >= threshold.coerceIn(4,64)) pending = true
         val targetHidden = if (nextBand==0) ageA>=53.0 || elapsedSeconds-fadeStartA>=2.5
             else ageB>=51.0 || elapsedSeconds-fadeStartB>=2.5
-        if (pending && !targetHidden && elapsedSeconds-lastSwitch >= 5.5) {
+        // Timed rebirth can follow an accelerated switch with younger-than-normal
+        // bands. Fade the target before either route, never reset a visible sheet.
+        val timedFadeDue = elapsedSeconds >= due - 2.5
+        if ((pending || timedFadeDue) && !targetHidden && elapsedSeconds-lastSwitch >= 5.5) {
             // Prepare the currently visible target before rebirth; never jump its shape.
             if (nextBand==0) fadeStartA=minOf(fadeStartA,elapsedSeconds)
             else fadeStartB=minOf(fadeStartB,elapsedSeconds)
         }
         val accelerated = onset && pending && targetHidden && elapsedSeconds-lastSwitch >= 8.0
-        val timed = elapsedSeconds >= due && (onset || elapsedSeconds-lastBeat > 2.0 || elapsedSeconds-due >= 1.2)
+        val timed = targetHidden && elapsedSeconds >= due && (onset || elapsedSeconds-lastBeat > 2.0 || elapsedSeconds-due >= 1.2)
         if (accelerated || timed) {
             val born = nextBand; nextBand = 1-nextBand
             if (born==0) {
