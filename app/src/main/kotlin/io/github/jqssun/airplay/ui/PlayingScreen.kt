@@ -2,6 +2,7 @@ package io.github.jqssun.airplay.ui
 
 import android.app.Activity
 import android.content.Context
+import io.github.jqssun.airplay.BuildConfig
 import io.github.jqssun.airplay.Prefs
 import io.github.jqssun.airplay.audio.LightTuning
 import android.content.pm.ActivityInfo
@@ -85,10 +86,20 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     val connections by viewModel.connectionCount.collectAsState()
     val audioOnly by viewModel.audioOnly.collectAsState()
     val reportedPlaying by viewModel.audioPlaying.collectAsState()
+    val rotationEnabled by viewModel.pref(Prefs.PLAYER_RECORD_ROTATION).collectAsState()
+    val previewRequested by viewModel.pref(Prefs.PLAYER_THEME_PREVIEW).collectAsState()
+    val auroraEnabled = BuildConfig.AURORA_ENABLED && auroraThemeEnabled(viewModel)
+    var auroraFailed by remember { mutableStateOf(false) }
+    LaunchedEffect(auroraEnabled) { auroraFailed = false }
     val lightTuningEnabled by viewModel.pref(Prefs.PLAYER_LIGHT_TUNING).collectAsState()
     val controlsReady by viewModel.audioControlsReady.collectAsState()
     val connected = connections > 0 && audioOnly
-    val playing = connected && reportedPlaying
+    val previewPlaying = PlayerThemePreview.enabled(previewRequested, auroraEnabled, connections)
+    val latestPreview by rememberUpdatedState(previewPlaying)
+    val previewValues = remember { FloatArray(49) }
+    val previewEpoch = remember { System.nanoTime() }
+    LaunchedEffect(previewPlaying) { if (previewPlaying) viewModel.audioSpectrum(false) }
+    val playing = previewPlaying || (connected && reportedPlaying)
     val latestPlaying by rememberUpdatedState(playing)
     val activity = LocalContext.current as? Activity
     val lifecycle = (activity as? LifecycleOwner)?.lifecycle
@@ -115,7 +126,9 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         }
     }
     var targetColors by remember { mutableStateOf(DefaultPlayerColors) }
-    val colors = animatedColors(targetColors)
+    val colors = animatedColors(if (auroraEnabled && !auroraFailed) PlayerColors(
+        Color(0xFF010405), Color(0xFF123D31), Color(0xFF17152A),
+        Color(0xFFF1F5F3), Color(0xFFC2CECA), Color(0xFFC2DECF)) else targetColors)
     val playFocus = remember { FocusRequester() }
     LaunchedEffect(track.coverArt) { targetColors = withContext(Dispatchers.Default) { coverColors(track.coverArt) } }
     DisposableEffect(activity) {
@@ -130,8 +143,8 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     LaunchedEffect(controlsReady) { if (controlsReady) playFocus.requestFocusUntilLanded() }
     // Rotation only changes a hardware layer property. No FFT, allocation or layout
     // work is performed in its vsync callback; pausing retains the current angle.
-    LaunchedEffect(playing, lifecycle) {
-        if (playing) lifecycle?.repeatOnLifecycle(Lifecycle.State.STARTED) {
+    LaunchedEffect(playing, lifecycle, rotationEnabled) {
+        if (playing && rotationEnabled) lifecycle?.repeatOnLifecycle(Lifecycle.State.STARTED) {
             var previous = 0L
             while (isActive) withFrameNanos { now ->
                 if (previous != 0L) angle.floatValue =
@@ -150,7 +163,9 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                     val dt = if (previous == 0L) 1f / 60f else
                         ((now - previous) / 1e9f).coerceIn(0f, .1f)
                     previous = now
-                    val values = viewModel.audioSpectrum(latestPlaying, latestTuning)
+                    val values = if (latestPreview)
+                        PlayerThemePreview.sample(((now - previewEpoch) / 1e9).toFloat(), previewValues)
+                    else viewModel.audioSpectrum(latestPlaying, latestTuning)
                     if (latestPlaying && values.isNotEmpty()) {
                         var sum = 0f
                         for (i in 0 until minOf(16, values.size)) {
@@ -194,11 +209,15 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         val controlGap = (if (compact) 16.dp else 26.dp) * controlScale
         val titleSize = minOf(if (square) 28f else if (compact) 27f else 40f,
             detailsWidth.value * .12f).coerceAtLeast(18f).sp
-        PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue },
+        if (auroraEnabled && !auroraFailed) AuroraThemeBackdrop(
+            viewModel, playing, energy = { lightEnergy.floatValue }, beat = { lightBeat.floatValue },
+            spectrum = { spectrum.value }, modifier = Modifier.fillMaxSize(),
+            onFailure = { auroraFailed = true })
+        else PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue },
             beat = { lightBeat.floatValue }, tuning = lightTuning)
         Row(Modifier.fillMaxSize().padding(horizontal = edge).padding(top = topGap, bottom = if (compact) 18.dp else 40.dp), verticalAlignment = Alignment.CenterVertically) {
             BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
-                val discSize = minOf(maxWidth, maxHeight)
+                val discSize = minOf(maxWidth, maxHeight) * .80f
                 RecordSpectrum(displayCover, colors, { angle.floatValue }, { spectrum.value }, Modifier.size(discSize))
             }
             Spacer(Modifier.width(columnGap))

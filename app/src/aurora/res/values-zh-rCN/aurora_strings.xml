@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="setting_aurora_prerender">极光预渲染（实验）</string>
+    <string name="setting_aurora_prerender_desc">使用固定 256 次采样的高画质动画，降低绘制负载。背景帧率仍可单独调整，保留鼓点与星星联动。画质、采样选项用于实时模式；不支持的设备自动回退。</string>
+    <string name="setting_aurora_prerender_scale" formatted="false">预渲染极光缩放（%）</string>
+    <string name="setting_aurora_prerender_scale_desc" formatted="false">范围 50–200，默认 100。调大可放大近处极光，裁剪更多；调小可展示更多素材。仅影响预渲染动态极光。</string>
+</resources>

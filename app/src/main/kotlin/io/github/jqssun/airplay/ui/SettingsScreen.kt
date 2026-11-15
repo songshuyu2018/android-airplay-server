@@ -28,6 +28,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.github.jqssun.airplay.BackgroundLaunchAccess
+import io.github.jqssun.airplay.BuildConfig
 import io.github.jqssun.airplay.Prefs
 import io.github.jqssun.airplay.R
 import io.github.jqssun.airplay.appSettingsIntent
@@ -44,6 +45,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
     val alacEnabled by viewModel.pref(Prefs.ALAC_ENABLED).collectAsState()
     val aacEnabled by viewModel.pref(Prefs.AAC_ENABLED).collectAsState()
     val resolution by viewModel.pref(Prefs.RESOLUTION).collectAsState()
+    val recordRotation by viewModel.pref(Prefs.PLAYER_RECORD_ROTATION).collectAsState()
     val playerLightTuning by viewModel.pref(Prefs.PLAYER_LIGHT_TUNING).collectAsState()
     val idlePreview by viewModel.pref(Prefs.IDLE_PREVIEW).collectAsState()
     val autoFullscreen by viewModel.pref(Prefs.AUTO_FULLSCREEN).collectAsState()
@@ -196,6 +198,15 @@ fun SettingsScreen(viewModel: MainViewModel) {
         }
 
         SectionHeader(stringResource(R.string.section_display))
+
+        SettingSwitch(
+            title = stringResource(R.string.setting_record_rotation),
+            description = stringResource(R.string.setting_record_rotation_desc),
+            checked = recordRotation,
+            onCheckedChange = { viewModel.set(Prefs.PLAYER_RECORD_ROTATION, it) }
+        )
+
+        if (BuildConfig.AURORA_ENABLED) AuroraSettings(viewModel)
 
         SettingSwitch(
             title = stringResource(R.string.setting_player_light_tuning),
@@ -612,7 +623,7 @@ private fun doneAndHide(commit: () -> Unit): KeyboardActions {
 }
 
 @Composable
-private fun SettingTextField(
+internal fun SettingTextField(
     label: String,
     value: String,
     onCommit: (String) -> Unit,
@@ -719,7 +730,7 @@ private fun ChipRow(
 }
 
 @Composable
-private fun SettingChips(
+internal fun SettingChips(
     title: String,
     description: String,
     value: String,
@@ -739,7 +750,7 @@ private fun SettingChips(
 }
 
 @Composable
-private fun <T> SettingSegmented(
+internal fun <T> SettingSegmented(
     title: String,
     summary: String,
     value: T,
@@ -771,7 +782,7 @@ private fun <T> SettingSegmented(
 }
 
 @Composable
-private fun SettingSwitch(
+internal fun SettingSwitch(
     title: String,
     description: String,
     checked: Boolean,

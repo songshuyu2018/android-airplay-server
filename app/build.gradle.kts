@@ -50,6 +50,19 @@ android {
         }
     }
 
+    // Generated compile-time flag plus isolated sources/resources/assets for each edition.
+    flavorDimensions += "visuals"
+    productFlavors {
+        create("aurora") {
+            dimension = "visuals"
+            buildConfigField("boolean", "AURORA_ENABLED", "true")
+        }
+        create("standard") {
+            dimension = "visuals"
+            buildConfigField("boolean", "AURORA_ENABLED", "false")
+        }
+    }
+
     buildTypes {
         debug {
             ndk { abiFilters += allAbis }
@@ -74,6 +87,8 @@ android {
         }
     }
 
+    androidResources { noCompress += "aurora" }
+
     dependenciesInfo {
         includeInApk = false
         includeInBundle = false
@@ -85,6 +100,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         compose = true
         prefab = true
     }

@@ -1,0 +1,43 @@
+{
+  "samples": 256,
+  "sourceSize": [
+    1152,
+    384
+  ],
+  "frames": 480,
+  "periodSeconds": 30.769230769230766,
+  "gpuFormat": "ASTC4x4",
+  "diskFormat": "indexed zlib frames, two bounded data chunks per band",
+  "files": [
+    {
+      "file": "aurora_band_0.aurora",
+      "bytes": 3888,
+      "sha256": "81f7ac156164ab353c8fa0434ead9d096c5050a93e58912c4ce6ba55e392d938"
+    },
+    {
+      "file": "aurora_band_0_0.aurora",
+      "bytes": 52928127,
+      "sha256": "4ac194e9bfc65970e40086b92e270dd24e04c255d3d69c2f2aa74fce29b2c129"
+    },
+    {
+      "file": "aurora_band_0_1.aurora",
+      "bytes": 52589848,
+      "sha256": "103d8c676c684498ba5a9a9612351914cf7414d59e6f7999840432a213700c2e"
+    },
+    {
+      "file": "aurora_band_1.aurora",
+      "bytes": 3888,
+      "sha256": "88386130296518c8a838c24f06de29b5931d8dfab138a5124693d798de2a1d54"
+    },
+    {
+      "file": "aurora_band_1_0.aurora",
+      "bytes": 49002625,
+      "sha256": "8e04d28a3576078573a0de08268658f39e1a84fbcf9cbc39e9ea2aff0d2ab860"
+    },
+    {
+      "file": "aurora_band_1_1.aurora",
+      "bytes": 48288601,
+      "sha256": "3ccc36205a7c4646186dc7a3c7e9fe073b32a4cd7588839f65007415272dfc75"
+    }
+  ]
+}
