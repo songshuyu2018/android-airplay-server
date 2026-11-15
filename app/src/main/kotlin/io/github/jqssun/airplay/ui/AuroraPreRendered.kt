@@ -72,15 +72,15 @@ internal class AuroraPreRendered private constructor(private val program: Int) {
     }
     private val sources=ArrayList<Source>(2)
     private val lock=Any()
-    private val pool=ArrayList<ByteBuffer>(12)
+    private val pool=ArrayList<ByteBuffer>(24)
     private val loaded=LinkedHashMap<Int,ByteBuffer>()
     private val pending=HashSet<Int>()
     private var needed=emptySet<Int>()
     @Volatile private var closed=false
     @Volatile private var error: Exception?=null
     private val worker=Executors.newSingleThreadExecutor { r->Thread(r,"aurora-cache-reader").apply {isDaemon=true} }
-    private val textures=IntArray(6)
-    private val uploaded=IntArray(6) {-1}
+    private val textures=IntArray(8)
+    private val uploaded=IntArray(8) {-1}
     private val displayed=IntArray(4)
     private val fractions=FloatArray(2)
     private var hasFrame=false
@@ -96,8 +96,8 @@ internal class AuroraPreRendered private constructor(private val program: Int) {
         check("GL_KHR_texture_compression_astc_ldr" in extensions || GL.glGetString(GL.GL_VERSION).orEmpty().startsWith("OpenGL ES 3.2"))
         sources.add(Source(context,0));sources.add(Source(context,1))
         check(sources[0].width==sources[1].width && sources[0].height==sources[1].height && sources[0].count==sources[1].count && sources[0].period==sources[1].period)
-        repeat(12) {pool.add(ByteBuffer.allocateDirect(sources[0].bytes))}
-        GL.glGenTextures(6,textures,0)
+        repeat(24) {pool.add(ByteBuffer.allocateDirect(sources[0].bytes))}
+        GL.glGenTextures(8,textures,0)
         GL.glGenTextures(1,sceneTexture,0)
         GL.glGenFramebuffers(1,sceneFramebuffer,0)
         outputUniform=GL.glGetUniformLocation(program,"uCachedOutputOnly")
@@ -113,20 +113,20 @@ internal class AuroraPreRendered private constructor(private val program: Int) {
     }
     private fun slot(key: Int): Int {
         val count=sources[0].count;val index=key%count
-        val colour=if(index==count-1 && count%3==1)1 else index%3
-        return (key/count)*3+colour
+        val colour=if(index==count-1 && count%4==1)1 else index%4
+        return (key/count)*4+colour
     }
     private fun have(key: Int)=uploaded[slot(key)]==key || loaded.containsKey(key)
     private fun request(key: Int) {
         synchronized(lock) {
-            if(closed || have(key) || key in pending || pending.size>=12)return
+            if(closed || have(key) || key in pending || pending.size>=24)return
             pending.add(key)
         }
         worker.execute {
             var buffer: ByteBuffer?=null
             try {
                 synchronized(lock) {
-                    if(!closed) {
+                    if(!closed && key in needed) {
                         if(pool.isEmpty()) {
                             val evict=loaded.entries.firstOrNull {it.key !in needed}
                             if(evict!=null) {pool.add(evict.value);loaded.remove(evict.key)}
@@ -137,7 +137,7 @@ internal class AuroraPreRendered private constructor(private val program: Int) {
                 val data=buffer
                 if(data!=null && !closed) {
                     val count=sources[0].count;sources[key/count].frame(key%count,data)
-                    synchronized(lock) {if(!closed) {loaded.put(key,data)?.let {pool.add(it)};buffer=null}}
+                    synchronized(lock) {if(!closed && key in needed) {loaded.put(key,data)?.let {pool.add(it)};buffer=null}}
                 }
             } catch(e: Exception) {if(!closed)error=e}
             finally {synchronized(lock) {buffer?.let {if(!closed)pool.add(it)};pending.remove(key)}}
@@ -158,32 +158,35 @@ internal class AuroraPreRendered private constructor(private val program: Int) {
             keys[band*2]=band*count+first;keys[band*2+1]=band*count+(first+1)%count
             blends[band]=(position-first).toFloat()
         }
-        synchronized(lock) {needed=keys.toSet()}
-        keys.forEach(::request)
-        for(band in 0..1)for(ahead in 2..3)request(band*count+(keys[band*2]%count+ahead)%count)
-        synchronized(lock) {
-            if(keys.all {have(it)}) {
-                for(key in keys) {
-                    val slot=slot(key)
-                    if(uploaded[slot]!=key) {
-                        val data=loaded.remove(key)!!
-                        try {
-                            GL.glActiveTexture(GL.GL_TEXTURE9);GL.glBindTexture(GL.GL_TEXTURE_2D,textures[slot])
-                            GL.glTexParameteri(GL.GL_TEXTURE_2D,GL.GL_TEXTURE_MIN_FILTER,GL.GL_LINEAR)
-                            GL.glTexParameteri(GL.GL_TEXTURE_2D,GL.GL_TEXTURE_MAG_FILTER,GL.GL_LINEAR)
-                            GL.glTexParameteri(GL.GL_TEXTURE_2D,GL.GL_TEXTURE_WRAP_S,GL.GL_CLAMP_TO_EDGE)
-                            GL.glTexParameteri(GL.GL_TEXTURE_2D,GL.GL_TEXTURE_WRAP_T,GL.GL_CLAMP_TO_EDGE)
-                            data.position(0)
-                            if(uploaded[slot]<0)
-                                GL.glCompressedTexImage2D(GL.GL_TEXTURE_2D,0,0x93B0,sources[0].width,sources[0].height,0,sources[0].bytes,data)
-                            else GL.glCompressedTexSubImage2D(GL.GL_TEXTURE_2D,0,0,0,sources[0].width,sources[0].height,0x93B0,sources[0].bytes,data)
-                            check(GL.glGetError()==GL.GL_NO_ERROR) {"ASTC frame upload failed"}
-                            uploaded[slot]=key
-                        } finally {pool.add(data)}
-                    }
+        // Roughly half a second of interleaved look-ahead at the source frame rate.
+        val window=LinkedHashSet<Int>();keys.forEach {window.add(it)}
+        for(ahead in 2..9)for(band in 0..1)window.add(band*count+(keys[band*2]%count+ahead)%count)
+        synchronized(lock) {needed=window}
+        window.forEach(::request)
+        val frames=synchronized(lock) {
+            if(keys.all {have(it)})Array<ByteBuffer?>(4) {i->
+                if(uploaded[slot(keys[i])]!=keys[i])loaded.remove(keys[i])!! else null
+            } else null
+        }
+        if(frames!=null) {
+            // Never hold the reader lock while a driver upload may wait on the GPU.
+            try {
+                for(i in keys.indices) {
+                    val data=frames[i] ?: continue;val key=keys[i];val slot=slot(key)
+                    GL.glActiveTexture(GL.GL_TEXTURE9);GL.glBindTexture(GL.GL_TEXTURE_2D,textures[slot])
+                    GL.glTexParameteri(GL.GL_TEXTURE_2D,GL.GL_TEXTURE_MIN_FILTER,GL.GL_LINEAR)
+                    GL.glTexParameteri(GL.GL_TEXTURE_2D,GL.GL_TEXTURE_MAG_FILTER,GL.GL_LINEAR)
+                    GL.glTexParameteri(GL.GL_TEXTURE_2D,GL.GL_TEXTURE_WRAP_S,GL.GL_CLAMP_TO_EDGE)
+                    GL.glTexParameteri(GL.GL_TEXTURE_2D,GL.GL_TEXTURE_WRAP_T,GL.GL_CLAMP_TO_EDGE)
+                    data.position(0)
+                    if(uploaded[slot]<0)
+                        GL.glCompressedTexImage2D(GL.GL_TEXTURE_2D,0,0x93B0,sources[0].width,sources[0].height,0,sources[0].bytes,data)
+                    else GL.glCompressedTexSubImage2D(GL.GL_TEXTURE_2D,0,0,0,sources[0].width,sources[0].height,0x93B0,sources[0].bytes,data)
+                    check(GL.glGetError()==GL.GL_NO_ERROR) {"ASTC frame upload failed"}
+                    synchronized(lock) {uploaded[slot]=key}
                 }
                 keys.copyInto(displayed);blends.copyInto(fractions);hasFrame=true
-            }
+            } finally {synchronized(lock) {frames.forEach {if(it!=null)pool.add(it)}}}
         }
         return hasFrame
     }
@@ -226,7 +229,7 @@ internal class AuroraPreRendered private constructor(private val program: Int) {
     fun release(deleteTextures: Boolean=true) {
         closed=true;worker.shutdownNow();sources.forEach {runCatching {it.close()}}
         synchronized(lock) {loaded.clear();pool.clear();pending.clear()}
-        if(deleteTextures && textures.any {it!=0})GL.glDeleteTextures(6,textures,0)
+        if(deleteTextures && textures.any {it!=0})GL.glDeleteTextures(8,textures,0)
         if(deleteTextures && sceneFramebuffer[0]!=0)GL.glDeleteFramebuffers(1,sceneFramebuffer,0)
         if(deleteTextures && sceneTexture[0]!=0)GL.glDeleteTextures(1,sceneTexture,0)
         sceneFramebuffer[0]=0;sceneTexture[0]=0

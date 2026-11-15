@@ -33,12 +33,20 @@ vec3 cachedNear(vec2 uv) {
     if(uCachedBlend<=0.)return texture(uNear,uv).rgb;
     vec3 live=vec3(0.);
     if(uCachedBlend<1.)live=texture(uNear,uv).rgb;
-    vec2 sampleUV=vec2((uv.x-.5)*uCachedAspect/3.+.5,1.-uv.y);
+    // Square views retain curtain size; gradually reveal full width toward 4:3.
+    float visibleWidth=mix(.62,1.,smoothstep(1.,4./3.,uCachedAspect));
+    float height=min(uCachedAspect/(3.*visibleWidth),.88);
+    vec2 sampleUV=vec2((uv.x-.5)*uCachedAspect/(3.*height)+.5,.5-(uv.y-.56)/height);
+    if(any(lessThan(sampleUV,vec2(0.))) || any(greaterThan(sampleUV,vec2(1.))))
+        return mix(live,vec3(0.),uCachedBlend);
     vec4 a=mix(texture(uCached0,sampleUV),texture(uCached1,sampleUV),uCachedFractions.x);
     vec4 b=mix(texture(uCached2,sampleUV),texture(uCached3,sampleUV),uCachedFractions.y);
     vec3 ca=cachedBand(a,uCachedLife.x,uCachedLife.z,.70,.92,uv);
     vec3 cb=cachedBand(b,uCachedLife.y,uCachedLife.w,.64,.88,uv);
-    return mix(live,1.-(1.-ca)*(1.-cb),uCachedBlend);
+    // Containment exposes material borders; feather them instead of showing a rectangle.
+    float edge=smoothstep(0.,.08,sampleUV.y)*smoothstep(0.,.05,1.-sampleUV.y);
+    edge*=smoothstep(0.,.02,sampleUV.x)*smoothstep(0.,.02,1.-sampleUV.x);
+    return mix(live,1.-(1.-ca*edge)*(1.-cb*edge),uCachedBlend);
 }
 
 float staticShade(vec2 uv) {
