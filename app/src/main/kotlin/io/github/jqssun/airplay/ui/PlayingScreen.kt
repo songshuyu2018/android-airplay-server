@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -226,8 +227,12 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                     Text("NOW PLAYING", color = colors.body, fontSize = 11.sp, letterSpacing = 3.sp)
                     Spacer(Modifier.height(18.dp))
                 }
-                Text(track.title.ifBlank { stringResource(R.string.player_waiting) }, color = colors.ink, fontSize = titleSize,
-                    fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = titleSize * 1.2f)
+                // Reserve two line heights so changing titles never shifts the controls.
+                Box(Modifier.fillMaxWidth().height(with(LocalDensity.current) { (titleSize * 2.4f).toDp() }),
+                    contentAlignment = Alignment.CenterStart) {
+                    Text(track.title.ifBlank { stringResource(R.string.player_waiting) }, color = colors.ink, fontSize = titleSize,
+                        fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = titleSize * 1.2f)
+                }
                 Spacer(Modifier.height(if (compact) 8.dp else 14.dp))
                 Text(track.artist.ifBlank { if (connected) stringResource(R.string.player_unknown_artist) else "AirPlay" }, color = colors.body, fontSize = if (compact) 15.sp else 21.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(5.dp))
