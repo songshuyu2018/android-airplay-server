@@ -33,9 +33,10 @@ a real HTTP attempt.
 
 NSD callbacks are marshalled to the main looper, guarded by listener identity,
 sender generation and resolve token. Discovery retries use bounded 0.5-8s backoff
-with no permanent lifetime attempt cap. Resolve watchdogs prevent a missing legacy
-callback from blocking subsequent work. Timers and old callbacks cannot overwrite
-a new owner; release cancels discovery, scheduling and pending requests.
+with no permanent lifetime attempt cap. A legacy resolve remains owned until its
+system callback completes; the four-second watchdog reports slow resolution without
+pretending to cancel the OS operation. Timers and old callbacks cannot overwrite a
+new owner; release cancels discovery, scheduling and pending commands.
 
 An NSD lost event schedules endpoint refresh but retains the last working address
 until a real HTTP request fails. That permits control during a transient mDNS loss.
@@ -75,7 +76,58 @@ HTTP acknowledgment followed by continued sender playback or a subsequent play.
   using the verified wrapper distribution's embedded Kotlin compiler, then compiles
   the Android app against the real SDK.
 
-These tests do not simulate Huawei Bluetooth firmware or certify the unobserved
-failure. The verification APK needs device testing with headset and App controls,
-including pause/play during reconnect. If HTTP 204 is observed without actual stop,
-new logs provide evidence for a separate sender/state-confirmation issue.
+These tests do not simulate Huawei Bluetooth firmware. The 2026-11-14 capture
+confirmed missing expected-service discovery while screen-off, followed by late
+resolution and error 3 after wake. It does not prove where multicast was filtered.
+The verification APK needs device testing with headset and App controls, including
+pause/play during reconnect. If HTTP 204 is observed without actual stop, logs
+provide evidence for a separate sender/state-confirmation issue.
+
+## Connection-time endpoint cache and screen-off recovery
+
+The RTSP connection reports its numeric peer address through UxPlay's per-session
+callback, JNI event 12 and AudioSessionGate. Probes, closed connections and old
+sessions cannot replace the active audio sender's address.
+
+When live DACP-ID and Active-Remote arrive, DacpController immediately browses
+`_dacp._tcp` and installs an endpoint hint if it knows the RTSP peer:
+
+1. Reuse the saved port for this DACP-ID and numeric peer address.
+2. Otherwise use port 39831, Music Assistant's usual DACP port.
+3. Continue NSD discovery to learn other ports and refresh stale hints.
+
+Only the endpoint is persisted, never Active-Remote. The private cache holds at
+most 16 entries for seven days. A successful resolution or HTTP command refreshes
+it. A failed request invalidates the matching cached port; a two-second hint
+cooldown prevents a tight retry loop while permitting later recovery without
+multicast. The existing command deadline, latest play/pause intent and three HTTP
+attempt limit still apply. Ambiguous next/previous/volume failures are not retried.
+The default port is a fallback, not a general DACP protocol constant.
+
+On Android's legacy NSD API a four-second watchdog cannot cancel the system
+resolve. It now reports slow resolution and starts recovery without releasing the
+resolve slot. The terminal system callback releases that slot. A late result is
+accepted only for the current DACP generation; a pending replacement resolve is
+submitted after the old operation really finishes. Repeated identical endpoint
+announcements do not invalidate a queued HTTP worker snapshot.
+
+The receiver already holds a partial CPU wake lock. Its existing multicast lock
+is now idempotent and paired with a Wi-Fi high-performance lock for the running
+receiver, with balanced release on stop or startup failure. On Android 12 this
+supports screen-off discovery; newer Android versions restrict Wi-Fi lock modes.
+Locks are supplementary: cached/default unicast requests remain usable without a
+fresh mDNS response. No QU packet implementation is introduced.
+
+## Additional verification
+
+The release workflow runs the session and DACP Java tests plus
+`tests/control/run-integration.sh <Gradle lib directory>`. Integration tests use
+real loopback HTTP with a deterministic NSD/looper test double. They cover slow
+resolves, session replacement, discovery outages, stale and missing cache,
+current-session credentials, default-port failure/recovery, command ordering and
+network-lock lifecycle. They do not emulate Huawei firmware's screen-off packet
+filter; validate that behavior with the resulting APK and device logs.
+
+Useful log messages: `DACP endpoint hint` (`source=cache` or `ma-default`),
+`DACP resolve start`, `DACP resolve slow`, `DACP resolve ignored old session`,
+`DACP resolved`, and `Receiver network locks`.

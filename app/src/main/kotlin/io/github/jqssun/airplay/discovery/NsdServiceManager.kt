@@ -12,14 +12,36 @@ class NsdServiceManager(private val ctx: Context) {
 
     private val nsdManager = ctx.getSystemService(Context.NSD_SERVICE) as NsdManager
     private var multicastLock: WifiManager.MulticastLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
     private val registrations = mutableListOf<NsdManager.RegistrationListener>()
 
-    fun acquireMulticastLock() {
+    @Suppress("DEPRECATION")
+    fun acquireNetworkLocks() {
         val wifi = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        multicastLock = wifi.createMulticastLock("airplay_mdns").apply {
-            setReferenceCounted(false)
-            acquire()
+        try {
+            if (multicastLock?.isHeld != true) {
+                multicastLock = wifi.createMulticastLock("airplay_mdns").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "Cannot acquire multicast lock", e)
         }
+        try {
+            if (wifiLock?.isHeld != true) {
+                // Android 12: keep the radio awake with the receiver, including
+                // screen-off DACP discovery. Newer Android versions may restrict
+                // this mode; endpoint caching remains the primary recovery path.
+                wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "airplay_receiver").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "Cannot acquire Wi-Fi lock", e)
+        }
+        Log.i(TAG, "Receiver network locks multicast=${multicastLock?.isHeld == true} wifi=${wifiLock?.isHeld == true}")
     }
 
     fun register(services: List<MdnsService>) = services.forEach(::_register)
@@ -54,8 +76,11 @@ class NsdServiceManager(private val ctx: Context) {
             try { nsdManager.unregisterService(it) } catch (_: Exception) {}
         }
         registrations.clear()
-        multicastLock?.release()
+        if (multicastLock?.isHeld == true) multicastLock?.release()
         multicastLock = null
+        if (wifiLock?.isHeld == true) wifiLock?.release()
+        wifiLock = null
+        Log.i(TAG, "Receiver network locks released")
     }
 
     companion object {

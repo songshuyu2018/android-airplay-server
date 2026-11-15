@@ -182,6 +182,18 @@ static void _conn_init(void *cls) {
             else (*env)->CallVoidMethod(env, ctx->callback_obj, ctx->on_conn_init);
 }
 
+/* The RTSP peer is a numeric address, not a guessed DNS-SD host. */
+static void _conn_remote(void *cls, const char *address) {
+    android_callback_ctx_t *ctx = (android_callback_ctx_t *)cls;
+    JNIEnv *env = _get_env(ctx);
+    if (!env || !callback_session_id || !address) return;
+    jstring peer = (*env)->NewStringUTF(env, address);
+    if (peer) {
+        _session_event(ctx, 12, NULL, 0, 0, 0, peer, NULL);
+        (*env)->DeleteLocalRef(env, peer);
+    }
+}
+
 static void _conn_destroy(void *cls) {
     android_callback_ctx_t *ctx = (android_callback_ctx_t *)cls;
     JNIEnv *env = _get_env(ctx);
@@ -472,6 +484,7 @@ void android_callbacks_fill(raop_callbacks_t *cbs, android_callback_ctx_t *ctx) 
     cbs->conn_reset = _conn_reset;
     cbs->video_reset = _video_reset;
     cbs->conn_init = _conn_init;
+    cbs->conn_remote = _conn_remote;
     cbs->conn_destroy = _conn_destroy;
     cbs->audio_flush = _audio_flush;
     cbs->video_flush = _video_flush;

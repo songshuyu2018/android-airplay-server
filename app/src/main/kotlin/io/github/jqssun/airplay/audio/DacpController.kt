@@ -20,6 +20,9 @@ class DacpController(ctx: Context, private val onStateChanged: () -> Unit = {}) 
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private val state = DacpControlState()
+    private val cache = DacpEndpointCache(ctx)
+    private var senderAddress = ""
+    private val rejectedHints = mutableMapOf<Pair<String, Int>, Long>()
     private val results = mutableMapOf<Long, SettableFuture<Unit>>()
     @Volatile var dacpId = ""; private set
     @Volatile var activeRemote = ""; private set
@@ -27,9 +30,10 @@ class DacpController(ctx: Context, private val onStateChanged: () -> Unit = {}) 
     // Capability survives temporary endpoint loss: a press can initiate recovery.
     val canControl: Boolean get() = state.canControl()
     private var discovery: NsdManager.DiscoveryListener? = null
-    private var resolveToken = 0L
     private var nextResolveToken = 0L
-    private var pendingResolve: NsdServiceInfo? = null
+    private data class Resolution(val token: Long, val owner: Long, val info: NsdServiceInfo)
+    private var resolving: Resolution? = null
+    private var pendingResolve: Resolution? = null
     private var retryStep = 0
     private var recoveryNeeded = false
     private var recoveringScheduled = false
@@ -41,6 +45,7 @@ class DacpController(ctx: Context, private val onStateChanged: () -> Unit = {}) 
     private val recovery = Runnable {
         recoveringScheduled = false
         if (canControl && (recoveryNeeded || !ready)) {
+            installHint(); publish(); pump()
             stopDiscovery()
             startDiscovery()
             scheduleRecovery()
@@ -57,9 +62,14 @@ class DacpController(ctx: Context, private val onStateChanged: () -> Unit = {}) 
     private fun onMain(block: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post { block() }
     }
-    fun update(dacpId: String, activeRemote: String) = onMain {
+    @JvmOverloads
+    fun update(dacpId: String, activeRemote: String, senderAddress: String = "") = onMain {
         if (closed) return@onMain
-        if (state.update(dacpId, activeRemote)) {
+        // A peer change is also an ownership change, even if the sender reused its IDs.
+        if (this.senderAddress != senderAddress) state.reset()
+        if (state.update(dacpId, activeRemote) || this.senderAddress != senderAddress) {
+            this.senderAddress = senderAddress
+            rejectedHints.clear()
             this.dacpId = dacpId; this.activeRemote = activeRemote
             stopDiscovery()
             pendingResolve = null
@@ -67,12 +77,14 @@ class DacpController(ctx: Context, private val onStateChanged: () -> Unit = {}) 
             main.removeCallbacks(recovery); recoveringScheduled = false
             recoveryNeeded = true
         }
+        installHint()
         if (canControl && discovery == null) startDiscovery()
-        if (canControl && !ready) scheduleRecovery()
+        if (canControl && (recoveryNeeded || !ready)) scheduleRecovery()
         drain(); publish(); pump()
     }
     fun reset() = onMain {
-        state.reset(); dacpId = ""; activeRemote = ""
+        state.reset(); dacpId = ""; activeRemote = ""; senderAddress = ""
+        rejectedHints.clear()
         stopDiscovery(); pendingResolve = null
         main.removeCallbacks(recovery); recoveringScheduled = false
         recoveryNeeded = false; retryStep = 0
@@ -112,6 +124,7 @@ class DacpController(ctx: Context, private val onStateChanged: () -> Unit = {}) 
         val result = SettableFuture.create<Unit>()
         onMain {
             if (closed) { result.setException(IOException("DACP released")); return@onMain }
+            installHint()
             val id = state.enqueue(path, SystemClock.elapsedRealtime())
             results[id] = result
             main.removeCallbacks(expiry)
@@ -132,9 +145,23 @@ class DacpController(ctx: Context, private val onStateChanged: () -> Unit = {}) 
                 val attempted = state.shouldSend(attempt, SystemClock.elapsedRealtime())
                 val success = attempted && fetch(attempt)
                 main.post {
+                    if (!closed && attempted && state.ownsEndpoint(attempt)) {
+                        if (success) {
+                            cache.remember(attempt.dacpId, attempt.host, attempt.port)
+                            rejectedHints.remove(attempt.host to attempt.port)
+                            // A working unicast endpoint does not need a periodic
+                            // browse restart just because multicast is unavailable.
+                            recoveryNeeded = false; retryStep = 0
+                            main.removeCallbacks(recovery); recoveringScheduled = false
+                        } else {
+                            cache.forget(attempt.dacpId, attempt.host, attempt.port)
+                            rejectedHints[attempt.host to attempt.port] = SystemClock.elapsedRealtime() + 2000
+                        }
+                    }
                     state.complete(attempt, success, attempted, SystemClock.elapsedRealtime())
+                    installHint()
                     drain(); publish()
-                    if (!closed && canControl && !ready) {
+                    if (!closed && canControl && (!ready || (attempted && !success))) {
                         recoveryNeeded = true
                         scheduleRecovery(immediate = true)
                     }
@@ -202,38 +229,72 @@ class DacpController(ctx: Context, private val onStateChanged: () -> Unit = {}) 
             Log.w(TAG, "DACP browse error", e); scheduleRecovery()
         }
     }
+    /** Hints never carry credentials and never execute a transport command by themselves. */
+    private fun installHint() {
+        if (closed || !canControl || ready || senderAddress.isBlank()) return
+        val cachedPort = cache.port(dacpId, senderAddress)
+        val ports = listOfNotNull(cachedPort, 39831).distinct()
+        val now = SystemClock.elapsedRealtime()
+        val port = ports.firstOrNull { (rejectedHints[senderAddress to it] ?: 0L) <= now } ?: return
+        if (state.endpoint(state.session(), senderAddress, port)) {
+            val source = if (port == cachedPort) "cache" else "ma-default"
+            Log.i(TAG, "DACP endpoint hint session=${state.session()} source=$source $senderAddress:$port")
+        }
+    }
+
     private fun resolve(info: NsdServiceInfo) {
         if (closed || !canControl) return
-        if (resolveToken != 0L) { pendingResolve = info; return }
-        val owner = state.session()
-        val token = ++nextResolveToken
-        resolveToken = token
+        val request = Resolution(++nextResolveToken, state.session(), info)
+        val active = resolving
+        if (active != null) {
+            // Legacy Android NSD permits one resolve per client. A local watchdog
+            // cannot cancel it: retain ownership until the real terminal callback.
+            if (active.owner != request.owner || active.info.serviceName != info.serviceName)
+                pendingResolve = request
+            return
+        }
+        resolving = request
+        Log.i(TAG, "DACP resolve start session=${request.owner} task=${request.token} service=${info.serviceName}")
+        val watchdog = Runnable {
+            if (resolving === request && !closed && request.owner == state.session()) {
+                Log.w(TAG, "DACP resolve slow session=${request.owner}; keeping system task ${request.token}")
+                if (!ready) { recoveryNeeded = true; scheduleRecovery() }
+            }
+        }
         fun finish(resolved: NsdServiceInfo?, error: String?) {
-            if (token != resolveToken) return
-            resolveToken = 0
-            if (!closed && owner == state.session()) {
-                val address = resolved?.host?.hostAddress
-                if (resolved != null && !address.isNullOrEmpty() && state.endpoint(owner, address, resolved.port)) {
+            if (resolving !== request) return
+            resolving = null
+            main.removeCallbacks(watchdog)
+            if (!closed && request.owner == state.session()) {
+                // The RTSP peer is authoritative for routing; NSD supplies the
+                // port and must not redirect us to an address cached before restart.
+                val address = senderAddress.ifBlank { resolved?.host?.hostAddress.orEmpty() }
+                val nameMatches = resolved?.serviceName.equals("iTunes_Ctrl_$dacpId", ignoreCase = true)
+                if (resolved != null && nameMatches && !address.isNullOrEmpty() &&
+                    state.endpoint(request.owner, address, resolved.port)) {
+                    cache.remember(dacpId, address, resolved.port)
                     recoveryNeeded = false; retryStep = 0
                     main.removeCallbacks(recovery); recoveringScheduled = false
-                    Log.i(TAG, "DACP resolved session=$owner $address:${resolved.port}")
+                    Log.i(TAG, "DACP resolved session=${request.owner} $address:${resolved.port}")
                     publish(); pump()
                 } else {
-                    recoveryNeeded = true
-                    Log.w(TAG, "DACP resolve failed session=$owner reason=$error")
-                    scheduleRecovery()
+                    Log.w(TAG, "DACP resolve failed session=${request.owner} reason=$error")
+                    recoveryNeeded = recoveryNeeded || !ready
+                    if (recoveryNeeded) scheduleRecovery()
                 }
+            } else if (!closed) {
+                Log.i(TAG, "DACP resolve ignored old session=${request.owner} current=${state.session()}")
             }
             val next = pendingResolve
             pendingResolve = null
-            if (next != null && !closed && canControl) resolve(next)
+            if (next != null && !closed && next.owner == state.session() && canControl) resolve(next.info)
         }
         try {
             nsd.resolveService(info, object : NsdManager.ResolveListener {
                 override fun onServiceResolved(result: NsdServiceInfo) { main.post { finish(result, null) } }
                 override fun onResolveFailed(result: NsdServiceInfo, code: Int) { main.post { finish(null, code.toString()) } }
             })
-            main.postDelayed({ finish(null, "timeout") }, 4000)
+            main.postDelayed(watchdog, 4000)
         } catch (e: Exception) { finish(null, e.javaClass.simpleName) }
     }
     private fun fetch(a: DacpControlState.Attempt): Boolean {

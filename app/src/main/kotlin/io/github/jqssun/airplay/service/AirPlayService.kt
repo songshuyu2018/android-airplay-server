@@ -477,10 +477,10 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "airplay:server").apply { acquire() }
 
-        nsdManager = NsdServiceManager(this).apply { acquireMulticastLock() }
+        nsdManager = NsdServiceManager(this).apply { acquireNetworkLocks() }
 
         // shairport-sync advertises itself over mDNS, so the app only keeps the
-        // multicast lock here and does no NsdManager registration of its own
+        // network locks here and does no NsdManager registration of its own
         if (prefs[Prefs.USE_SHAIRPORT]) {
             _startShairport(effectiveName, ensureServiceStarted)
             return
@@ -999,6 +999,15 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     private fun handleSessionEvent(e: SessionEvent) {
         if (_serverState.value != ServerState.RUNNING) return
         when (e.kind) {
+            12 -> {
+                audioSessionGate.peer(e.id, e.first.orEmpty())
+                if (audioSessionGate.accepts(e.id)) {
+                    dacpController?.let { controller ->
+                        if (controller.canControl) controller.update(controller.dacpId, controller.activeRemote, audioSessionGate.peerAddress())
+                    }
+                }
+                return
+            }
             1 -> {
                 audioSessionGate.connected(e.id)
                 if (audioSessionGate.newestId() == 0L) onConnectionInit()
@@ -1334,7 +1343,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             _mainHandler.post { onDacpId(dacpId, activeRemote) }
             return
         }
-        dacpController?.update(dacpId, activeRemote)
+        dacpController?.update(dacpId, activeRemote, audioSessionGate.peerAddress())
         log("DACP: $dacpId")
     }
 

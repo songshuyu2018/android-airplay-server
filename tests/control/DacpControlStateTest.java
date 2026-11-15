@@ -83,6 +83,14 @@ public final class DacpControlStateTest {
             s.complete(old, false, false, 3);
             check(s.claim(4).id == id);
         }
+        // Repeated NSD delivery of the same endpoint cannot invalidate a queued
+        // worker snapshot or prevent a command from ever reaching HTTP.
+        {
+            DacpControlState s = session(); resolve(s, 1000);
+            long id = s.enqueue(PAUSE, 0); Attempt a = s.claim(1);
+            resolve(s, 1000); check(s.shouldSend(a, 2) && s.ownsEndpoint(a));
+            s.complete(a, true, true, 3); outcome(s, id, Outcome.SUCCESS);
+        }
         // Explicit commands retry at most three times, then complete with an error.
         {
             DacpControlState s = session(); long id = s.enqueue(PAUSE, 0);

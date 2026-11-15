@@ -12,7 +12,9 @@ java -m jdk.compiler/com.sun.tools.javac.Main -d "$test_dir" \
   app/src/main/java/io/github/jqssun/airplay/audio/DacpControlState.java
 java -cp "$gradle_lib/*" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler \
   -no-stdlib -no-reflect -jvm-target 17 -classpath "$dep_cp" -d "$test_dir" \
-  app/src/main/kotlin/io/github/jqssun/airplay/audio/DacpController.kt
+  app/src/main/kotlin/io/github/jqssun/airplay/audio/DacpController.kt \
+  app/src/main/kotlin/io/github/jqssun/airplay/audio/DacpEndpointCache.kt \
+  app/src/main/kotlin/io/github/jqssun/airplay/discovery/NsdServiceManager.kt
 java -m jdk.compiler/com.sun.tools.javac.Main --add-modules jdk.httpserver \
   -cp "$dep_cp" -d "$test_dir" tests/control/DacpControllerIntegrationTest.java
 java --add-modules jdk.httpserver -cp "$test_dir:$gradle_lib/*" DacpControllerIntegrationTest

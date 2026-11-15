@@ -1,0 +1,22 @@
+--- a/lib/raop.h
++++ b/lib/raop.h
+@@ -73,6 +73,7 @@
+     void* cls;
+     uint64_t session_id;
+     void (*session_enter)(void *cls, uint64_t session_id);
++    void (*conn_remote)(void *cls, const char *address);
+ 
+     void  (*audio_process)(void *cls, raop_ntp_t *ntp, audio_decode_struct *data);
+     void  (*video_process)(void *cls, raop_ntp_t *ntp, video_decode_struct *data);
+--- a/lib/raop.c
++++ b/lib/raop.c
+@@ -204,6 +204,9 @@
+     
+     if (raop->callbacks.conn_init) {
+         raop->callbacks.conn_init(raop->callbacks.cls);
++    }
++    if (raop->callbacks.conn_remote) {
++        raop->callbacks.conn_remote(raop->callbacks.cls, ip_address);
+     }
+ 
+     return conn;

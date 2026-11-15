@@ -61,8 +61,12 @@ public final class DacpControlState {
     public synchronized void close() { reset(); closed = true; }
     public synchronized boolean endpoint(long owner, String address, int endpointPort) {
         if (owner != session || !canControl() || address == null || address.isEmpty() || endpointPort <= 0 || endpointPort > 65535) return false;
-        host = address; port = endpointPort; revision++;
+        if (!host.equals(address) || port != endpointPort) revision++;
+        host = address; port = endpointPort;
         return true;
+    }
+    public synchronized boolean ownsEndpoint(Attempt a) {
+        return !closed && a.session == session && a.revision == revision;
     }
     public synchronized long enqueue(String path, long now) {
         expire(now);
