@@ -76,6 +76,9 @@ object Prefs {
     val SERVER_PORT = int("server_port", 7000, 1..65535, restart = true)
     val AUTO_START = bool("auto_start", true)
     val BOOT_AUTO_START = bool("boot_auto_start", true)
+    val PLAYBACK_CALLBACK_ENABLED = bool("playback_callback_enabled", false)
+    val PLAYBACK_CALLBACK_ON = str("playback_callback_on", "") { it.length <= 65536 }
+    val PLAYBACK_CALLBACK_OFF = str("playback_callback_off", "") { it.length <= 65536 }
     val RUN_IN_BACKGROUND = bool("run_in_background", true)
     val H265 = tri("h265", restart = true)
     val ENFORCE_SDR = bool("enforce_sdr", true, restart = true)

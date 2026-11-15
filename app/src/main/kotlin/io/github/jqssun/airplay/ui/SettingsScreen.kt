@@ -275,6 +275,9 @@ fun SettingsScreen(viewModel: MainViewModel) {
             onCheckedChange = { viewModel.set(Prefs.SYNC_CLIENT_VOLUME, it) }
         )
 
+        SectionHeader(stringResource(R.string.section_playback_callback))
+        PlaybackCallbackSettings(viewModel)
+
         SectionHeader(stringResource(R.string.section_developer))
 
         SettingSwitch(

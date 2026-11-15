@@ -227,4 +227,19 @@
     <string name="setting_player_light_tuning_desc">显示全屏播放页的光效调参悬浮入口，参数即时生效</string>
     <string name="setting_record_rotation">唱片旋转</string>
     <string name="setting_record_rotation_desc">播放时旋转唱片，两个主题均生效；关闭后停在当前角度，不影响频谱、歌词和背景动画。立即生效。</string>
+    <string name="section_playback_callback">播放状态上报</string>
+    <string name="setting_playback_callback">启用播放状态回调</string>
+    <string name="setting_playback_callback_desc">音乐开始时立即上报，播放中每 40 秒上报一次；确认暂停、断开或停止接收时立即上报暂停。</string>
+    <string name="callback_commands">回调命令</string>
+    <string name="callback_configured">已配置播放与暂停回调</string>
+    <string name="callback_not_configured">粘贴两条 curl 命令即可自动解析</string>
+    <string name="callback_edit">配置</string>
+    <string name="callback_import_desc">支持 URL、-X、-H 和 -d（含多行与引号），JSON 请求体自动补齐 Content-Type。启用或保存后会按当前音乐状态上报；请求头与请求体不会写入日志。</string>
+    <string name="callback_playing_command">播放中 · 每 40 秒</string>
+    <string name="callback_paused_command">暂停或停止 · 立即</string>
+    <string name="callback_save">保存</string>
+    <string name="callback_cancel">取消</string>
+    <string name="callback_request_preview">%1$s · %2$d 个请求头</string>
+    <string name="callback_paste_hint">粘贴完整 curl 命令</string>
+    <string name="callback_parse_error">无法解析，请检查 URL、参数和引号。不支持执行脚本、文件上传或多条命令。</string>
 </resources>

@@ -44,6 +44,9 @@ jobs:
           test -n "$compiler"
           bash tests/control/run-integration.sh "$(dirname "$compiler")"
 
+      - name: Test playback state callbacks
+        run: bash tests/reporting/run.sh
+
       - name: Test PCM spectrum
         run: |
           g++ -std=c++17 -Iapp/src/main/cpp tests/audio/spectrum_test.cpp -o /tmp/spectrum_test

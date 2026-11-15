@@ -119,6 +119,15 @@ class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app
 
     fun <T : Any> set(p: Pref<T>, v: T) { p.write(prefs, v) }
 
+    fun setPlaybackCallbackCommands(playing: String, paused: String) {
+        io.github.jqssun.airplay.reporting.CurlRequest.parse(playing)
+        io.github.jqssun.airplay.reporting.CurlRequest.parse(paused)
+        prefs.edit()
+            .putString(Prefs.PLAYBACK_CALLBACK_ON.key, playing)
+            .putString(Prefs.PLAYBACK_CALLBACK_OFF.key, paused)
+            .apply()
+    }
+
     private val _debugInfo = MutableStateFlow(DebugInfo())
     val debugInfo: StateFlow<DebugInfo> = _debugInfo.asStateFlow()
 

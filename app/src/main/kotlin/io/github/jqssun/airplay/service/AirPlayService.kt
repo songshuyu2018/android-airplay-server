@@ -84,6 +84,15 @@ data class VideoPlaybackInfo(
 
 class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
 
+    private val playbackReporter = io.github.jqssun.airplay.reporting.PlaybackStateReporter { message ->
+        Log.i(TAG, message)
+    }
+    private fun syncPlaybackReporting() {
+        playbackReporter.setPlaying(_serverState.value == ServerState.RUNNING &&
+            _audioOnly.value && _playing.value && audioPresentationPolicy.isPlaying &&
+            !_videoPlaybackActive.value && !_mirroringActive.value)
+    }
+
     private val audioPresentationPolicy = io.github.jqssun.airplay.audio.AudioPresentationPolicy()
     private val _audioPageRequest = MutableStateFlow(AudioPageRequest())
     val audioPageRequest = _audioPageRequest.asStateFlow()
@@ -413,6 +422,21 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
                 )
             }
         }
+        lifecycleScope.launch {
+            prefs.observe { Triple(this[Prefs.PLAYBACK_CALLBACK_ENABLED], this[Prefs.PLAYBACK_CALLBACK_ON], this[Prefs.PLAYBACK_CALLBACK_OFF]) }
+                .collect { (enabled, playing, paused) ->
+                    if (enabled) {
+                        try {
+                            playbackReporter.configure(
+                                io.github.jqssun.airplay.reporting.CurlRequest.parse(playing),
+                                io.github.jqssun.airplay.reporting.CurlRequest.parse(paused))
+                        } catch (_: IllegalArgumentException) {
+                            playbackReporter.configure(null, null)
+                            log("Playback callbacks disabled: invalid curl configuration")
+                        }
+                    } else playbackReporter.configure(null, null)
+                }
+        }
         // keep the shown position moving between the sender's (infrequent) progress lines
         lifecycleScope.launch {
             while (true) {
@@ -702,6 +726,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     }
 
     private fun _shutdown() {
+        playbackReporter.setPlaying(false)
         releaseAudioFocus()
         audioPresentationPolicy.reset()
         audioSessionGate.reset()
@@ -804,6 +829,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     override fun onDestroy() {
         // Destruction is not a user request to disable receiver restoration.
         _shutdown()
+        playbackReporter.close()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         foregroundStarted = false
         dacpPlayer.release()
@@ -843,6 +869,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         audioPresentationPolicy.reset()
         releaseAudioFocus()
         _videoPlaybackActive.value = true
+        syncPlaybackReporting()
         _updateMediaNotification()
         airPlayVideoPlayer.play(location, startPositionSeconds)
         // claim media-button routing for keys that arrive as media-session events
@@ -1265,6 +1292,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         _mainHandler.removeCallbacks(audioPauseAfterFlush)
         if (!_playing.value) _setPlaying(true)
         if (_audioOnly.value && !_videoPlaybackActive.value && !_mirroringActive.value) ensureAudioFocus()
+        syncPlaybackReporting()
     }
 
     /**
@@ -1382,6 +1410,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             _updateMediaNotification()
             log("Mirror mode")
         }
+        syncPlaybackReporting()
     }
 
     private fun ensureAudioFocus() {
@@ -1493,6 +1522,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     }
 
     private fun _updatePlaybackState() {
+        syncPlaybackReporting()
         // the sender's silent raop audio session must not overwrite video session state
         if (_videoPlaybackActive.value) return
         val active = _audioOnly.value && _connectionCount.value > 0
