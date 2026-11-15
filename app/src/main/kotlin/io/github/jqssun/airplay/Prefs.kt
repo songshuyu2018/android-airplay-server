@@ -121,7 +121,7 @@ object Prefs {
     val PLAYER_AURORA_SAMPLES = int("player_aurora_samples", 96, 48..96)
     val PLAYER_AURORA_FPS = int("player_aurora_fps", 20, 15..60) // Independent background rate.
     val PLAYER_AURORA_QUALITY = int("player_aurora_quality", 1, 0..4) // Background only; smooth default.
-    val PLAYER_AURORA = bool("player_aurora", true) // Debug rollout default; explicit user choice persists.
+    val PLAYER_AURORA = bool("player_aurora", BuildConfig.AURORA_ENABLED) // Debug rollout default; explicit user choice persists.
     val PLAYER_LIGHT_TUNING = bool("player_light_tuning", false)
     val AUDIO_IDLE_RETURN_HOME = bool("audio_idle_return_home", true)
     val LAUNCH_ON_CONNECT = bool("launch_on_connect", true)

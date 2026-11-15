@@ -28,6 +28,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.github.jqssun.airplay.BackgroundLaunchAccess
+import io.github.jqssun.airplay.BuildConfig
 import io.github.jqssun.airplay.Prefs
 import io.github.jqssun.airplay.R
 import io.github.jqssun.airplay.appSettingsIntent
@@ -45,15 +46,6 @@ fun SettingsScreen(viewModel: MainViewModel) {
     val aacEnabled by viewModel.pref(Prefs.AAC_ENABLED).collectAsState()
     val resolution by viewModel.pref(Prefs.RESOLUTION).collectAsState()
     val recordRotation by viewModel.pref(Prefs.PLAYER_RECORD_ROTATION).collectAsState()
-    val themePreview by viewModel.pref(Prefs.PLAYER_THEME_PREVIEW).collectAsState()
-    val preRenderScale by viewModel.pref(Prefs.PLAYER_AURORA_PRERENDER_SCALE).collectAsState()
-    val preRendered by viewModel.pref(Prefs.PLAYER_AURORA_PRERENDER).collectAsState()
-    val auroraBeats by viewModel.pref(Prefs.PLAYER_AURORA_BEATS).collectAsState()
-    val materialCache by viewModel.pref(Prefs.PLAYER_AURORA_MATERIAL_CACHE).collectAsState()
-    val auroraSamples by viewModel.pref(Prefs.PLAYER_AURORA_SAMPLES).collectAsState()
-    val auroraFps by viewModel.pref(Prefs.PLAYER_AURORA_FPS).collectAsState()
-    val auroraQuality by viewModel.pref(Prefs.PLAYER_AURORA_QUALITY).collectAsState()
-    val playerAurora by viewModel.pref(Prefs.PLAYER_AURORA).collectAsState()
     val playerLightTuning by viewModel.pref(Prefs.PLAYER_LIGHT_TUNING).collectAsState()
     val idlePreview by viewModel.pref(Prefs.IDLE_PREVIEW).collectAsState()
     val autoFullscreen by viewModel.pref(Prefs.AUTO_FULLSCREEN).collectAsState()
@@ -214,79 +206,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
             onCheckedChange = { viewModel.set(Prefs.PLAYER_RECORD_ROTATION, it) }
         )
 
-        SettingSwitch(
-            title = stringResource(R.string.setting_player_aurora),
-            description = stringResource(R.string.setting_player_aurora_desc),
-            checked = playerAurora,
-            onCheckedChange = { viewModel.set(Prefs.PLAYER_AURORA, it) }
-        )
-
-        SettingSwitch(
-            title = stringResource(R.string.setting_aurora_prerender),
-            description = stringResource(R.string.setting_aurora_prerender_desc),
-            checked = preRendered,
-            onCheckedChange = { viewModel.set(Prefs.PLAYER_AURORA_PRERENDER, it) }
-        )
-
-        SettingTextField(
-            label = stringResource(R.string.setting_aurora_prerender_scale),
-            description = stringResource(R.string.setting_aurora_prerender_scale_desc),
-            value = preRenderScale.toString(),
-            onCommit = { viewModel.set(Prefs.PLAYER_AURORA_PRERENDER_SCALE, it.toInt()) },
-            range = Prefs.PLAYER_AURORA_PRERENDER_SCALE.range
-        )
-
-        SettingChips(
-            title = stringResource(R.string.setting_aurora_quality),
-            description = stringResource(R.string.setting_aurora_quality_desc),
-            value = auroraQuality.toString(),
-            options = listOf(
-                "4" to stringResource(R.string.aurora_quality_ultra_saver),
-                "0" to stringResource(R.string.aurora_quality_saver),
-                "1" to stringResource(R.string.aurora_quality_smooth),
-                "2" to stringResource(R.string.aurora_quality_balanced),
-                "3" to stringResource(R.string.aurora_quality_high),
-            ),
-            onValueChange = { viewModel.set(Prefs.PLAYER_AURORA_QUALITY, it.toInt()) }
-        )
-
-        SettingSwitch(
-            title = stringResource(R.string.setting_aurora_material_cache),
-            description = stringResource(R.string.setting_aurora_material_cache_desc),
-            checked = materialCache,
-            onCheckedChange = { viewModel.set(Prefs.PLAYER_AURORA_MATERIAL_CACHE, it) }
-        )
-
-        SettingSegmented(
-            title = stringResource(R.string.setting_aurora_samples),
-            summary = stringResource(R.string.setting_aurora_samples_desc),
-            value = auroraSamples,
-            options = AuroraSampling.options.map { it to it.toString() },
-            onValueChange = { viewModel.set(Prefs.PLAYER_AURORA_SAMPLES, it) }
-        )
-
-        SettingSegmented(
-            title = stringResource(R.string.setting_aurora_fps),
-            summary = stringResource(R.string.setting_aurora_fps_desc),
-            value = auroraFps,
-            options = AuroraFrameRate.options.map { it to stringResource(R.string.aurora_fps_value, it) },
-            onValueChange = { viewModel.set(Prefs.PLAYER_AURORA_FPS, it) }
-        )
-
-        SettingTextField(
-            label = stringResource(R.string.setting_aurora_beats),
-            description = stringResource(R.string.setting_aurora_beats_desc),
-            value = auroraBeats.toString(),
-            onCommit = { viewModel.set(Prefs.PLAYER_AURORA_BEATS, it.toInt()) },
-            range = Prefs.PLAYER_AURORA_BEATS.range
-        )
-
-        SettingSwitch(
-            title = stringResource(R.string.setting_player_theme_preview),
-            description = stringResource(R.string.setting_player_theme_preview_desc),
-            checked = themePreview,
-            onCheckedChange = { viewModel.set(Prefs.PLAYER_THEME_PREVIEW, it) }
-        )
+        if (BuildConfig.AURORA_ENABLED) AuroraSettings(viewModel)
 
         SettingSwitch(
             title = stringResource(R.string.setting_player_light_tuning),
@@ -703,7 +623,7 @@ private fun doneAndHide(commit: () -> Unit): KeyboardActions {
 }
 
 @Composable
-private fun SettingTextField(
+internal fun SettingTextField(
     label: String,
     value: String,
     onCommit: (String) -> Unit,
@@ -810,7 +730,7 @@ private fun ChipRow(
 }
 
 @Composable
-private fun SettingChips(
+internal fun SettingChips(
     title: String,
     description: String,
     value: String,
@@ -830,7 +750,7 @@ private fun SettingChips(
 }
 
 @Composable
-private fun <T> SettingSegmented(
+internal fun <T> SettingSegmented(
     title: String,
     summary: String,
     value: T,
@@ -862,7 +782,7 @@ private fun <T> SettingSegmented(
 }
 
 @Composable
-private fun SettingSwitch(
+internal fun SettingSwitch(
     title: String,
     description: String,
     checked: Boolean,

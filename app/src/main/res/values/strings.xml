@@ -225,30 +225,6 @@
     <string name="setting_audio_idle_return_home_desc">音乐停止播放 30 秒后返回桌面；关闭后保留播放页面。</string>
     <string name="setting_player_light_tuning">播放页光效调节</string>
     <string name="setting_player_light_tuning_desc">显示全屏播放页的光效调参悬浮入口，参数即时生效</string>
-    <string name="setting_player_aurora">星空极光主题</string>
-    <string name="setting_player_aurora_desc">开启使用星空极光，关闭切回封面渐变；仅改变背景与前景配色。</string>
-    <string name="setting_player_theme_preview">主题演示（模拟播放）</string>
-    <string name="setting_player_theme_preview_desc">无设备连接时模拟播放与频谱，用于验证极光主题；不播放声音，不发送反控命令。连接真实设备后自动使用真实状态。</string>
-    <string name="setting_aurora_quality">极光背景画质</string>
-    <string name="setting_aurora_quality_desc">仅控制极光分辨率，帧率单独设置。极省电比省电更轻、极光更柔和；星星和前景保持清晰。立即生效。</string>
-    <string name="aurora_quality_saver">省电</string>
-    <string name="aurora_quality_smooth">流畅</string>
-    <string name="aurora_quality_balanced">均衡</string>
-    <string name="aurora_quality_high">高清</string>
-    <string name="setting_aurora_fps">极光背景帧率上限</string>
-    <string name="setting_aurora_fps_desc">独立于画质，立即生效。默认 20 fps；越高越连贯，也更耗电。仅控制背景刷新，不改变极光运动速度与前景动画；实际帧率取决于设备性能和屏幕刷新率。</string>
-    <string name="aurora_fps_value">%1$d fps</string>
-    <string name="setting_aurora_beats">极光切换鼓点数</string>
-    <string name="setting_aurora_beats_desc">累计多少个有效鼓点后提前交替出现，默认 16，可设 4–64；越小切换越快，最快间隔 8 秒。无鼓点时保留原周期，有鼓点时优先卡点，平滑交接。</string>
-    <string name="aurora_quality_ultra_saver">极省电</string>
     <string name="setting_record_rotation">唱片旋转</string>
     <string name="setting_record_rotation_desc">播放时旋转唱片，两个主题均生效；关闭后停在当前角度，不影响频谱、歌词和背景动画。立即生效。</string>
-    <string name="setting_aurora_samples">极光采样质量</string>
-    <string name="setting_aurora_samples_desc">每个像素的体积采样次数，与分辨率、帧率独立。默认 96，越高越细腻、计算量越大；切换后立即生效。</string>
-    <string name="setting_aurora_material_cache">极光材质预计算（实验）</string>
-    <string name="setting_aurora_material_cache_desc">缓存褶皱形态，减少重复计算；建议使用 96 次采样对比。关闭使用原算法，不支持的设备自动回退。保留已选择的采样次数。</string>
-    <string name="setting_aurora_prerender">Pre-rendered aurora (experimental)</string>
-    <string name="setting_aurora_prerender_desc">Fixed 256-sample cached animation with lower rendering load. Background FPS, beat timing and stars remain live. Quality and sampling controls apply to real-time mode, which is also used on unsupported devices.</string>
-    <string name="setting_aurora_prerender_scale" formatted="false">Pre-rendered aurora scale (%)</string>
-    <string name="setting_aurora_prerender_scale_desc" formatted="false">50–200%; default 100%. Larger values enlarge the near aurora and crop more of the material. Smaller values reveal more. Applies only to pre-rendered dynamic aurora.</string>
 </resources>

@@ -2,6 +2,7 @@ package io.github.jqssun.airplay.ui
 
 import android.app.Activity
 import android.content.Context
+import io.github.jqssun.airplay.BuildConfig
 import io.github.jqssun.airplay.Prefs
 import io.github.jqssun.airplay.audio.LightTuning
 import android.content.pm.ActivityInfo
@@ -87,14 +88,7 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     val reportedPlaying by viewModel.audioPlaying.collectAsState()
     val rotationEnabled by viewModel.pref(Prefs.PLAYER_RECORD_ROTATION).collectAsState()
     val previewRequested by viewModel.pref(Prefs.PLAYER_THEME_PREVIEW).collectAsState()
-    val preRenderScale by viewModel.pref(Prefs.PLAYER_AURORA_PRERENDER_SCALE).collectAsState()
-    val preRendered by viewModel.pref(Prefs.PLAYER_AURORA_PRERENDER).collectAsState()
-    val auroraBeats by viewModel.pref(Prefs.PLAYER_AURORA_BEATS).collectAsState()
-    val materialCache by viewModel.pref(Prefs.PLAYER_AURORA_MATERIAL_CACHE).collectAsState()
-    val auroraSamples by viewModel.pref(Prefs.PLAYER_AURORA_SAMPLES).collectAsState()
-    val auroraFps by viewModel.pref(Prefs.PLAYER_AURORA_FPS).collectAsState()
-    val auroraQuality by viewModel.pref(Prefs.PLAYER_AURORA_QUALITY).collectAsState()
-    val auroraEnabled by viewModel.pref(Prefs.PLAYER_AURORA).collectAsState()
+    val auroraEnabled = BuildConfig.AURORA_ENABLED && auroraThemeEnabled(viewModel)
     var auroraFailed by remember { mutableStateOf(false) }
     LaunchedEffect(auroraEnabled) { auroraFailed = false }
     val lightTuningEnabled by viewModel.pref(Prefs.PLAYER_LIGHT_TUNING).collectAsState()
@@ -215,9 +209,9 @@ fun PlayingScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         val controlGap = (if (compact) 16.dp else 26.dp) * controlScale
         val titleSize = minOf(if (square) 28f else if (compact) 27f else 40f,
             detailsWidth.value * .12f).coerceAtLeast(18f).sp
-        if (auroraEnabled && !auroraFailed) AuroraBackdrop(
-            playing, energy = { lightEnergy.floatValue }, beat = { lightBeat.floatValue },
-            spectrum = { spectrum.value }, quality = auroraQuality, frameRate = auroraFps, sampleCount = auroraSamples, materialCache = materialCache, preRendered = preRendered, preRenderScale = preRenderScale, beatThreshold = auroraBeats, modifier = Modifier.fillMaxSize(),
+        if (auroraEnabled && !auroraFailed) AuroraThemeBackdrop(
+            viewModel, playing, energy = { lightEnergy.floatValue }, beat = { lightBeat.floatValue },
+            spectrum = { spectrum.value }, modifier = Modifier.fillMaxSize(),
             onFailure = { auroraFailed = true })
         else PlayerBackdrop(colors, playing, lifecycle, energy = { lightEnergy.floatValue },
             beat = { lightBeat.floatValue }, tuning = lightTuning)

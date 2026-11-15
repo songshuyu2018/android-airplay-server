@@ -27,11 +27,18 @@ jobs:
           export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
           chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew :app:assembleAuroraDebug :app:assembleStandardDebug --stacktrace
 
-      - name: Upload APK
+      - name: Upload Aurora debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: app-debug-aurora
+          path: app/build/outputs/apk/aurora/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload Standard debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-standard
+          path: app/build/outputs/apk/standard/debug/*.apk
           if-no-files-found: error
