@@ -65,6 +65,9 @@ jobs:
           javac -d /tmp/presentation-tests app/src/main/java/io/github/jqssun/airplay/audio/AudioPresentationPolicy.java tests/presentation/AudioPresentationPolicyTest.java
           java -cp /tmp/presentation-tests AudioPresentationPolicyTest
 
+      - name: Test APK edition verifier
+        run: python3 .github/scripts/test_verify_apk_variants.py
+
       - name: Build release APK
         run: |
           export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)

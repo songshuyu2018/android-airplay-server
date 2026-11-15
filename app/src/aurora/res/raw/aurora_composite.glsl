@@ -22,9 +22,9 @@ uniform vec4 uCachedLife;
 uniform float uCachedMusic;
 uniform float uCachedAspect;
 uniform float uCachedZoom;
-vec3 cachedBand(vec4 field,float age,float fade,float holdEnd,float fadeEnd,vec2 uv) {
+vec3 cachedBand(vec4 field,float age,float fade,float holdEnd,float fadeEnd,vec2 uv,float revealWidth) {
     float threshold=field.a*.12;
-    float birth=smoothstep(0.,.0125,age)*smoothstep(threshold-.0035,threshold+.0035,age);
+    float birth=smoothstep(0.,.0125,age)*smoothstep(threshold-revealWidth,threshold+revealWidth,age);
     float death=1.-smoothstep(holdEnd+.0125,fadeEnd+.0125,age);
     float shade=mix(1.,.78,smoothstep(.44,.99,uv.x))*mix(.35,1.,smoothstep(.02,.40,uv.y));
     float exposure=max(0.,birth*death*fade*uCachedMusic*shade);
@@ -38,12 +38,19 @@ vec3 cachedNear(vec2 uv) {
     float visibleWidth=mix(.62,1.,smoothstep(1.,4./3.,uCachedAspect));
     float height=min(uCachedAspect/(3.*visibleWidth),.88)*clamp(uCachedZoom,.5,2.);
     vec2 sampleUV=vec2((uv.x-.5)*uCachedAspect/(3.*height)+.5,.5-(uv.y-.56)/height);
-    if(any(lessThan(sampleUV,vec2(0.))) || any(greaterThan(sampleUV,vec2(1.))))
-        return mix(live,vec3(0.),uCachedBlend);
+    bool outside=any(lessThan(sampleUV,vec2(0.))) || any(greaterThan(sampleUV,vec2(1.)));
+    bool revealing=any(lessThan(uCachedLife.xy,vec2(.132)));
+    if(!revealing && outside)return mix(live,vec3(0.),uCachedBlend);
     vec4 a=mix(texture(uCached0,sampleUV),texture(uCached1,sampleUV),uCachedFractions.x);
     vec4 b=mix(texture(uCached2,sampleUV),texture(uCached3,sampleUV),uCachedFractions.y);
-    vec3 ca=cachedBand(a,uCachedLife.x,uCachedLife.z,.70,.92,uv);
-    vec3 cb=cachedBand(b,uCachedLife.y,uCachedLife.w,.64,.88,uv);
+    // Antialias the transient reveal, not the material RGB. Evaluate derivatives
+    // before the per-pixel bounds branch so edge quads have defined gradients.
+    vec2 revealWidth=vec2(.006);
+    if(revealing)revealWidth=clamp(vec2(.006)+fwidth(vec2(a.a,b.a)*.12),vec2(.006),vec2(.012));
+    if(outside)
+        return mix(live,vec3(0.),uCachedBlend);
+    vec3 ca=cachedBand(a,uCachedLife.x,uCachedLife.z,.70,.92,uv,revealWidth.x);
+    vec3 cb=cachedBand(b,uCachedLife.y,uCachedLife.w,.64,.88,uv,revealWidth.y);
     // Containment exposes material borders; feather them instead of showing a rectangle.
     float edge=smoothstep(0.,.08,sampleUV.y)*smoothstep(0.,.05,1.-sampleUV.y);
     edge*=smoothstep(0.,.02,sampleUV.x)*smoothstep(0.,.02,1.-sampleUV.x);

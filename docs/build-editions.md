@@ -14,3 +14,5 @@ Aurora rendering, preview generation, settings, GLSL and material assets live in
 This is stronger than a runtime switch: the Standard source set never includes the renderer or the six pre-rendered material files, including debug builds. The material payload alone occupies 202,816,977 bytes (about 193.42 MiB), so actual APK sizes are reported by CI rather than assumed from the asset size.
 
 The unsigned-release CI builds both editions, verifies all six Aurora assets and their uncompressed/seekable storage, checks Standard for leaked assets/shaders/renderer classes, and reports both package sizes in the job summary. Download `airplay-aurora-release` and `airplay-standard-release` artifacts. The regular signed-release workflow publishes both APKs and bundles; the debug workflow also uploads two separately named artifacts.
+
+Media3 supplies shared GLSL shaders for video processing. These are expected in both editions. The package auditor identifies Aurora shaders by filename and source-content hashes, including renamed copies, instead of rejecting every `.glsl` resource.
