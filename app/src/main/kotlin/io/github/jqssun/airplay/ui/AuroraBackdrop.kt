@@ -23,7 +23,7 @@ import kotlin.math.*
 /** Background only: no input, playback commands, JNI or foreground drawing. */
 @Composable
 internal fun AuroraBackdrop(playing: Boolean, energy: () -> Float, beat: () -> Float,
-    spectrum: () -> FloatArray, quality: Int, frameRate: Int, sampleCount: Int, materialCache: Boolean, beatThreshold: Int, modifier: Modifier = Modifier, onFailure: () -> Unit) {
+    spectrum: () -> FloatArray, quality: Int, frameRate: Int, sampleCount: Int, materialCache: Boolean, preRendered: Boolean, beatThreshold: Int, modifier: Modifier = Modifier, onFailure: () -> Unit) {
     val context = LocalContext.current
     val lifecycle = (context as? LifecycleOwner)?.lifecycle
     val latestEnergy by rememberUpdatedState(energy)
@@ -40,6 +40,7 @@ internal fun AuroraBackdrop(playing: Boolean, energy: () -> Float, beat: () -> F
         it.renderer.beatThreshold = beatThreshold
         it.renderer.sampleCount = AuroraSampling.normalize(sampleCount)
         it.renderer.materialEnabled = materialCache
+        it.renderer.preRendered = preRendered
     })
     DisposableEffect(view, lifecycle, playing) {
         view.input = { view.renderer.input(latestEnergy(), latestBeat(), latestSpectrum()) }
@@ -116,6 +117,7 @@ private class AuroraView(context: Context, failure: () -> Unit) : GLSurfaceView(
         active = false
         input = null
         super.onDetachedFromWindow()
+        renderer.releasePreRenderedResources()
     }
 }
 
@@ -130,6 +132,11 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private var compositeProgram = 0
     @Volatile var materialEnabled = true
     private var material: AuroraMaterialCache? = null
+    @Volatile var preRendered = false
+    private var preCache: AuroraPreRendered? = null
+    private var preTried = false
+    private var preBlend = 0f
+    private var preBlendUniform = -1
     @Volatile var sampleCount = 96
     private var frameSamples = 96
     private var cachedSamples = 0
@@ -172,6 +179,9 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     private val vertices = ByteBuffer.allocateDirect(24).order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
         put(floatArrayOf(-1f,-1f,3f,-1f,-1f,3f)); position(0)
     }
+    fun releasePreRenderedResources() {
+        preCache?.release(false); preCache=null; preTried=false; preBlend=0f
+    }
     fun resetClock() { previous = 0; previousPulseTime = 0 }
     fun input(energy: Float, beat: Float, bands: FloatArray) {
         fun mean(start: Int, end: Int): Float {
@@ -205,6 +215,7 @@ private class AuroraRenderer(private val context: Context, private val failure: 
     }
     private fun source(id: Int) = context.resources.openRawResource(id).bufferedReader().use { it.readText() }
     override fun onSurfaceCreated(unused: GL10?, config: EGLConfig?) {
+        preCache?.release(false); preCache=null; preTried=false; preBlend=0f
         program = 0; previous = 0; dirty = true; cachedQuality = null
         textures.fill(0); framebuffers.fill(0); material = null; shadeReady = false; compactAvailable = true; cachedCompact = false
         GL.glClearColor(0f, 0f, 0f, 1f)
@@ -214,6 +225,7 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             farProgram = link(volume.replace("#version 300 es", "#version 300 es\n#define FAR_LAYER"))
             starProgram = link(source(R.raw.aurora_stars))
             compositeProgram = link(source(R.raw.aurora_composite))
+            preBlendUniform = GL.glGetUniformLocation(compositeProgram,"uCachedBlend")
             farBrightnessUniform = GL.glGetUniformLocation(compositeProgram,"uFarBrightness")
             sampleUniforms[0] = GL.glGetUniformLocation(program,"uSampleCount")
             sampleUniforms[1] = GL.glGetUniformLocation(farProgram,"uSampleCount")
@@ -375,7 +387,22 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             val compact = frameMaterialEnabled && compactAvailable
             if (dirty || cachedQuality != q || cachedSamples != frameSamples || cachedCompact != compact)
                 rebuildLayers(q,compact)
-            var cache = if (frameMaterialEnabled) material else null
+            if (!preRendered && preBlend<=0f) {
+                preCache?.release(); preCache=null; preTried=false
+            }
+            if (preRendered && !preTried) {
+                preTried=true; preCache=AuroraPreRendered.create(context,compositeProgram)
+            }
+            val aspect=screenWidth.toFloat()/screenHeight
+            val preReady=try {preCache?.prepare(time,cycle.generationA,cycle.generationB,aspect)==true}
+                catch(e: Exception) {
+                    Log.w("Aurora","Pre-render failed; using live background",e)
+                    preCache?.release(); preCache=null; preBlend=0f; false
+                }
+            val targetBlend=if(preRendered && preReady)1f else 0f
+            val blendStep=(elapsed/.45).toFloat()
+            preBlend=if(targetBlend>preBlend)minOf(targetBlend,preBlend+blendStep) else maxOf(targetBlend,preBlend-blendStep)
+            var cache = if (frameMaterialEnabled && preBlend<1f) material else null
             if (cache != null) {
                 try {
                     AuroraMotion.writeGenerations(cycle.generationA,cycle.generationB,shapes)
@@ -387,8 +414,24 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             }
             GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,framebuffers[0])
             GL.glViewport(0,0,bufferWidth,bufferHeight)
-            if (cache != null) volume(cache.volumeProgram,cache.uniforms,false)
-            else volume(program,uniforms,false)
+            if (preBlend<1f) {
+                if (cache != null) volume(cache.volumeProgram,cache.uniforms,false)
+                else volume(program,uniforms,false)
+            }
+            var finalNear=textures[0]
+            if(preBlend>0f) {
+                try {
+                    finalNear=preCache?.renderNear(preBlend,aspect,(cycle.ageA/56).toFloat(),(cycle.ageB/56).toFloat(),
+                        cycle.fadeA.toFloat(),cycle.fadeB.toFloat(),
+                        (1f+(snapshot[3]*.19f+snapshot[0]*.15f+snapshot[1]*.07f)/.83f+starPulse*.04f).coerceIn(.8f,1.6f),
+                        textures[0],screenWidth,screenHeight) ?: textures[0]
+                } catch(e: Exception) {
+                    Log.w("Aurora","Pre-render composition failed; using live background",e)
+                    preCache?.release();preCache=null;preBlend=0f
+                    GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,framebuffers[0]);GL.glViewport(0,0,bufferWidth,bufferHeight)
+                    volume(program,uniforms,false)
+                }
+            }
             GL.glBindFramebuffer(GL.GL_FRAMEBUFFER,0)
             GL.glViewport(0,0,screenWidth,screenHeight)
             GL.glUseProgram(compositeProgram)
@@ -399,10 +442,11 @@ private class AuroraRenderer(private val context: Context, private val failure: 
             val targetPulse = (snapshot[4] * .85f + snapshot[2] * .15f).coerceIn(0f,1f)
             val response = 1.0 - exp(-dt / if (targetPulse > starPulse) .035 else .22)
             starPulse += (targetPulse-starPulse) * response.toFloat()
+            GL.glUniform1f(preBlendUniform,0f)
             GL.glUniform1f(starPulseUniform,starPulse)
             GL.glUniform1f(farBrightnessUniform, farBrightness.toFloat())
             for (i in 0..2) {
-                GL.glActiveTexture(GL.GL_TEXTURE0+i); GL.glBindTexture(GL.GL_TEXTURE_2D,textures[i])
+                GL.glActiveTexture(GL.GL_TEXTURE0+i); GL.glBindTexture(GL.GL_TEXTURE_2D,if(i==0)finalNear else textures[i])
             }
             GL.glUniform2f(compositeUniforms[3],screenWidth.toFloat(),screenHeight.toFloat())
             GL.glDrawArrays(GL.GL_TRIANGLES,0,3)

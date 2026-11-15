@@ -114,6 +114,7 @@ object Prefs {
     val ADVERTISE_AUDIO = bool("advertise_audio", true, restart = true)
     val PLAYER_RECORD_ROTATION = bool("player_record_rotation", true)
     val PLAYER_THEME_PREVIEW = bool("player_theme_preview", true) // Temporary visual-only debug mode.
+    val PLAYER_AURORA_PRERENDER = bool("player_aurora_prerender", false)
     val PLAYER_AURORA_BEATS = int("player_aurora_beats", 16, 4..64)
     val PLAYER_AURORA_MATERIAL_CACHE = bool("player_aurora_material_cache", true)
     val PLAYER_AURORA_SAMPLES = int("player_aurora_samples", 96, 48..96)

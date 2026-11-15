@@ -74,6 +74,8 @@ android {
         }
     }
 
+    androidResources { noCompress += "aurora" }
+
     dependenciesInfo {
         includeInApk = false
         includeInBundle = false
